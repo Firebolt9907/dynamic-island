@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Dynamic Island</string>
+    <string name="accessibility_desc">Draws the Dynamic Island over the status bar and lets you tap and long-press it. No screen content is read or collected.</string>
+</resources>

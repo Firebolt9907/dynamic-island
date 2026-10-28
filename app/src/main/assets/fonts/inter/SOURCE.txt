@@ -1,0 +1,4 @@
+Inter by Rasmus Andersson / The Inter Project Authors
+Source: https://github.com/google/fonts/tree/main/ofl/inter
+Bundled static instances: optical size 14; weights 300, 400, 500, 600, 700.
+License: SIL Open Font License 1.1; see OFL.txt.

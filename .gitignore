@@ -1,0 +1,23 @@
+# Gradle and Kotlin caches
+.gradle/
+.kotlin/
+
+# Build outputs
+**/build/
+*.apk
+*.aab
+
+# Local Android SDK configuration
+local.properties
+
+# IDE and operating system files
+.idea/
+*.iml
+.DS_Store
+
+# Python caches and temporary files
+__pycache__/
+*.py[cod]
+*.tmp
+*.swp
+*~
