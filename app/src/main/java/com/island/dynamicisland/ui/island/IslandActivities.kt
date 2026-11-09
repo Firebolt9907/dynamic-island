@@ -2,6 +2,8 @@ package com.island.dynamicisland.ui.island
 
 /** A central activity plus at most two detached activities, left then right. */
 internal data class IslandActivities(val primary: String?, val secondaries: List<String>) {
+    /** Membership regardless of role; a change here is an arrival or a departure. */
+    val keys: Set<String> get() = listOfNotNull(primary).toSet() + secondaries
     companion object {
         const val MUSIC = "music"
         fun select(liveKeys: List<String>, hasMusic: Boolean): IslandActivities {

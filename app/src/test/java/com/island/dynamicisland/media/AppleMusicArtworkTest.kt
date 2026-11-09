@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AppleMusicArtworkTest {
+    @Test fun albumKeyIgnoresTrackAndDownloadMetadata() {
+        assertEquals(
+            AppleMusicArtwork.cacheKey("First Song", "Artist", "Déjà Vu"),
+            AppleMusicArtwork.cacheKey("Second Song (Downloaded)", "ARTIST", "Deja Vu"),
+        )
+        assertEquals(
+            AppleMusicArtwork.cacheKey("First", "Artist feat. Guest", "Album", "Artist"),
+            AppleMusicArtwork.cacheKey("Second", "Artist", "Album", "Artist"),
+        )
+        assertNotEquals(AppleMusicArtwork.cacheKey("Song", "A", "Album"), AppleMusicArtwork.cacheKey("Song", "B", "Album"))
+        assertNotEquals(AppleMusicArtwork.cacheKey("First", "A", ""), AppleMusicArtwork.cacheKey("Second", "A", ""))
+    }
+
+    @Test fun albumMatchingDoesNotDependOnTrackTitleOrDuration() {
+        assertTrue(AppleMusicArtwork.matchesAlbum("Déjà Vu", "Beyoncé", "Deja Vu", "Beyonce"))
+        assertFalse(AppleMusicArtwork.matchesAlbum("Album", "Artist", "Album Deluxe", "Artist"))
+        assertFalse(AppleMusicArtwork.matchesAlbum("Album", "Artist", "Album", "Other Artist"))
+    }
+
     @Test fun matchesOnlyTheSameRecording() {
         assertTrue(AppleMusicArtwork.matches("Déjà Vu", "Beyoncé", "Album", 180000, "Deja Vu", "Beyonce", "Album", 181000))
         assertFalse(AppleMusicArtwork.matches("Song", "Artist", "Album", 180000, "Song (Live)", "Artist", "Album", 180000))

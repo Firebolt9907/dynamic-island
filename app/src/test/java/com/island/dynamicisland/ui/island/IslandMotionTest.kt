@@ -175,6 +175,28 @@ class IslandMotionTest {
         assertEquals(1f, motion.fraction, .001f)
     }
 
+    @Test fun slowCompactDragCommitsWithoutFlingAndDoesNotLeaveFrozenProgress() = runTest {
+        val frames = MotionTestFrames()
+        val motion = IslandMotion(CoroutineScope(backgroundScope.coroutineContext + frames.clock))
+        motion.expandAutomatically(fromSecondary = false, mergeCompanions = false)
+        repeat(150) { frames.step(this, 16) }
+        assertTrue(motion.beginCompactDrag())
+        // A slow pull must finish using its displacement, with no release velocity.
+        repeat(40) {
+            motion.dragCompact(-2f, 200f)
+            frames.step(this, 32)
+        }
+        assertEquals(.6f, motion.fraction, .001f)
+        assertTrue(motion.finishCompactDrag(0f, 200f))
+        repeat(150) { frames.step(this, 16) }
+        assertFalse(motion.expanded)
+        assertEquals(0f, motion.fraction, .001f)
+        // Opening again must use the animation rather than a stale drag override.
+        motion.expandAutomatically(fromSecondary = false, mergeCompanions = false)
+        repeat(150) { frames.step(this, 16) }
+        assertEquals(1f, motion.fraction, .001f)
+    }
+
     @Test fun upwardFlickCollapsesAndCancelledDragRestoresExpanded() = runTest {
         val frames = MotionTestFrames()
         val motion = IslandMotion(CoroutineScope(backgroundScope.coroutineContext + frames.clock))

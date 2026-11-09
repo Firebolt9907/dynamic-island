@@ -12,15 +12,26 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 
+/** Captured only on a track change, rather than copying video frames during playback. */
+internal class MotionArtworkFrame {
+    var capture: (() -> android.graphics.Bitmap?)? = null
+        internal set
+
+    fun snapshot(): android.graphics.Bitmap? = runCatching { capture?.invoke() }.getOrNull()
+}
+
 /** Texture rendering follows the shared artwork's clipping, scaling, and flip layers. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifier = Modifier, expansion: () -> Float = { 1f }) {
+internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifier = Modifier, expansion: () -> Float = { 1f }, frame: MotionArtworkFrame? = null) {
     val context = LocalContext.current
     var ready by remember(url) { mutableStateOf(false) }
     var failed by remember(url) { mutableStateOf(false) }
+    var texture by remember(url) { mutableStateOf<TextureView?>(null) }
     val player = remember(url) {
-        ExoPlayer.Builder(context).build().apply {
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(AppleMotionCache.factory(context)))
+            .build().apply {
             volume = 0f
             trackSelectionParameters = trackSelectionParameters.buildUpon()
                 .setMaxVideoSize(512, 512)
@@ -40,6 +51,13 @@ internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifie
         player.prepare()
         onDispose { player.removeListener(listener); player.release() }
     }
+    DisposableEffect(frame, player) {
+        val capture = { if (ready && !failed && expansion() > 0f) texture?.bitmap else null }
+        frame?.capture = capture
+        onDispose {
+            if (frame?.capture === capture) frame.capture = null
+        }
+    }
     SideEffect { player.playWhenReady = playing && !failed }
     // Keep the static bitmap underneath while the first decoded frame fades in.
     val opacity = androidx.compose.animation.core.animateFloatAsState(
@@ -50,6 +68,7 @@ internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifie
         modifier = modifier.graphicsLayer { alpha = opacity.value * expansion().coerceIn(0f, 1f) },
         factory = {
             TextureView(it).apply {
+                texture = this
                 isOpaque = false
                 fun crop() {
                     val video = player.videoSize
@@ -71,4 +90,24 @@ internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifie
             }
         },
     )
+}
+
+/** One process-wide cache: HLS playlists and segments survive player recreation. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private object AppleMotionCache {
+    private var cache: androidx.media3.datasource.cache.SimpleCache? = null
+
+    @Synchronized
+    fun factory(context: android.content.Context): androidx.media3.datasource.DataSource.Factory {
+        val app = context.applicationContext
+        val shared = cache ?: androidx.media3.datasource.cache.SimpleCache(
+            java.io.File(app.cacheDir, "apple-motion-artwork"),
+            androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(256L * 1024 * 1024),
+            androidx.media3.database.StandaloneDatabaseProvider(app),
+        ).also { cache = it }
+        return androidx.media3.datasource.cache.CacheDataSource.Factory()
+            .setCache(shared)
+            .setUpstreamDataSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(app))
+            .setFlags(androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
 }

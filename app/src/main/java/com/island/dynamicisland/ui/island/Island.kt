@@ -27,6 +27,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -193,39 +194,42 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
     val currentActivities by com.island.dynamicisland.live.LiveUpdateRepository.activities.collectAsStateWithLifecycle()
     val hiddenActivityKeys = currentActivities.filter { isLiveActivitySourceOpen(foregroundPackage, it) }.map { it.key }.toSet()
     val visibleActivities = currentActivities.filterNot { it.key in hiddenActivityKeys }
+    var presentedActivities by remember { mutableStateOf(currentActivities) }
     var selectedKey by remember { mutableStateOf<String?>(null) }
     var touchedKey by remember { mutableStateOf<String?>(null) }
     val nowPlaying by MediaRepository.nowPlaying.collectAsStateWithLifecycle()
     var retainedActivities by remember { mutableStateOf(visibleActivities) }
     var retainedMusic by remember { mutableStateOf(nowPlaying) }
-    val np = nowPlaying ?: retainedMusic
+    var retainedMusicShown by remember { mutableStateOf(false) }
+    val musicSource = nowPlaying ?: retainedMusic
     val neutralEdge = Color.White.copy(alpha = .18f)
     // Reuse the cached artwork accent; no bitmap processing in the drawing path.
     val musicEdge by animateColorAsState(
-        targetValue = np?.takeIf { it.staticAlbumArt != null }?.let {
+        targetValue = musicSource?.takeIf { it.staticAlbumArt != null }?.let {
             Color(it.staticArtworkAccentColor).brightAccent().copy(alpha = .30f)
         } ?: neutralEdge,
         animationSpec = tween(350), label = "musicEdge",
     )
     val scope = rememberCoroutineScope()
+    val reflow = remember { CameraReflowMotion() }
     val haptics = rememberIslandHaptics()
     val motion = remember(scope) { IslandMotion(scope) }
-    var musicHidden by remember { mutableStateOf(np?.isPlaying != true) }
+    var musicHidden by remember { mutableStateOf(musicSource?.isPlaying != true) }
     var interaction by remember { mutableStateOf(0) }
     var activityTouchActive by remember { mutableStateOf(false) }
     val compact by remember(motion) { derivedStateOf {
         !motion.expanded && !motion.previewActive &&
             motion.progress.value == 0f && motion.transfer.value == 0f
     } }
-    LaunchedEffect(np?.isPlaying, np?.packageName, compact, interaction) {
-        if (np?.isPlaying == true) musicHidden = false
+    LaunchedEffect(musicSource?.isPlaying, musicSource?.packageName, compact, interaction) {
+        if (musicSource?.isPlaying == true) musicHidden = false
         else if (compact && !musicHidden) {
             delay(5_000)
             musicHidden = true
         }
     }
     val sourceAppOpen = isMusicSourceOpen(foregroundPackage, nowPlaying?.packageName)
-    val visible = surfaceVisible && (visibleActivities.isNotEmpty() || (!sourceAppOpen && nowPlaying != null && (!musicHidden || nowPlaying?.isPlaying == true)))
+    val visible = surfaceVisible && (presentedActivities.any { it.key !in hiddenActivityKeys } || (!sourceAppOpen && nowPlaying != null && (!musicHidden || nowPlaying?.isPlaying == true)))
     LaunchedEffect(sourceAppOpen) {
         if (sourceAppOpen && (selectedKey == null || selectedKey == IslandActivities.MUSIC)) motion.dismiss()
         else if (!sourceAppOpen && nowPlaying != null) {
@@ -242,18 +246,19 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
     }
     SideEffect {
         if (visible) {
-            retainedActivities = visibleActivities
+            retainedActivities = presentedActivities.filterNot { it.key in hiddenActivityKeys }
             retainedMusic = nowPlaying
+            retainedMusicShown = !sourceAppOpen && musicSource != null && (!musicHidden || musicSource.isPlaying)
         } else if (visibility == 0f) {
             retainedActivities = emptyList()
             retainedMusic = null
+            retainedMusicShown = false
         }
     }
     // Publish notification changes only after deciding whether they need expansion.
     // This also prevents a single frame of new content before the effect starts.
     // Keep the complete snapshot: filtering it at publication time and again at
     // render time creates an empty frame when switching between two source apps.
-    var presentedActivities by remember { mutableStateOf(currentActivities) }
     var heldActivity by remember { mutableStateOf<com.island.dynamicisland.live.LiveUpdate?>(null) }
     var replacementKeys by remember { mutableStateOf(emptyMap<Pair<String, String>, Int>()) }
     var pendingReplacementKey by remember { mutableStateOf<String?>(null) }
@@ -271,20 +276,47 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
         }
         presentedActivities = updates
     }
-    val sourceActivities = (if (!visible && visibility > 0f) retainedActivities else presentedActivities)
-        .filterNot { it.key in hiddenActivityKeys }
+    // Fade out exactly what was last shown. Opening an activity's app hides it at the
+    // same moment the island becomes invisible; re-filtering or re-deciding music here
+    // would swap a hidden paused-music bubble in for the activity during the fade.
+    val fadingOut = !visible && visibility > 0f
+    val sourceActivities = if (fadingOut) retainedActivities
+        else presentedActivities.filterNot { it.key in hiddenActivityKeys }
     val sportsPresentation = presentSportsScores(sourceActivities, onScoreChangeReady = { haptics.score() }) { key ->
         motion.expanded && motion.fraction >= .99f &&
             (selectedKey ?: sourceActivities.firstOrNull()?.key) == key
     }
-    val activities = sportsPresentation.activities
+    val tuning by IslandConfig.tuning.collectAsStateWithLifecycle()
     // Keep paused artwork in place until the fade finishes.
-    val slots = IslandActivities.select(activities.map { it.key },
-        !sourceAppOpen && np != null && (!musicHidden || np.isPlaying || (!visible && visibility > 0f)))
+    val presentedSlots = IslandActivities.select(sportsPresentation.activities.map { it.key },
+        if (fadingOut) retainedMusicShown && musicSource != null
+        else !sourceAppOpen && musicSource != null && (!musicHidden || musicSource.isPlaying))
+    // A membership change in the compact island reflows through the camera. The outgoing
+    // layout, including departed content, stays on screen until it is inside the lens.
+    var shownSlots by remember { mutableStateOf(presentedSlots) }
+    // Tapping a bubble opens its app, hiding it while the tap's rebound is still running.
+    // Keep the old layout until the island settles, then reflow; only an expanded card
+    // (which owns the transition itself) adopts the new layout immediately.
+    val reflowRequested = tuning.reflowThroughCamera && !motion.expanded && visible && visibility >= 1f &&
+        shownSlots.primary != null && presentedSlots.primary != null &&
+        presentedSlots.keys != shownSlots.keys
+    val reflowActive by remember(reflow) { derivedStateOf { reflow.active } }
+    val holdingSlots = reflowActive || reflowRequested
+    val slots = if (holdingSlots) shownSlots else presentedSlots
+    SideEffect { if (!holdingSlots) shownSlots = presentedSlots }
+    val latestHoldingSlots by rememberUpdatedState(holdingSlots)
+    val departedActivities = remember { mutableMapOf<String, com.island.dynamicisland.live.LiveUpdate>() }
+    val departedMusic = remember { RetainedValue<com.island.dynamicisland.media.NowPlaying?>(null) }
+    sportsPresentation.activities.forEach { departedActivities[it.key] = it }
+    departedActivities.keys.retainAll(sportsPresentation.activities.map { it.key }.toSet() + slots.keys)
+    if (musicSource != null) departedMusic.value = musicSource
+    val activities = if (!holdingSlots) sportsPresentation.activities
+        else sportsPresentation.activities + slots.keys.filter { key ->
+            sportsPresentation.activities.none { it.key == key } }.mapNotNull { departedActivities[it] }
+    val np = musicSource ?: departedMusic.value.takeIf { holdingSlots && IslandActivities.MUSIC in slots.keys }
     val selection = if (motion.secondary) selectedKey?.takeIf { it in slots.secondaries } ?: slots.primary else slots.primary
     val live = activities.firstOrNull { it.key == selection }
     val primaryLive = activities.firstOrNull { it.key == slots.primary }
-    val tuning by IslandConfig.tuning.collectAsStateWithLifecycle()
     val screenWidthDp by IslandConfig.screenWidthDp.collectAsStateWithLifecycle()
     val cameraGuide by IslandConfig.cameraGuide.collectAsStateWithLifecycle()
     val deviceCorner by IslandConfig.topCornerRadiusDp.collectAsStateWithLifecycle()
@@ -317,6 +349,18 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
         }
     }
     LaunchedEffect(currentActivities, hiddenActivityKeys) {
+        // A removed notification must keep its content and slot until the expanded
+        // card has collapsed. Publishing first swaps the card underneath the exit,
+        // and fading the whole island simultaneously makes that collapse disappear.
+        val outgoingKey = selection
+        if (outgoingKey != null && presentedActivities.any { it.key == outgoingKey } &&
+            currentActivities.none { it.key == outgoingKey } &&
+            (motion.fraction > 0f || motion.previewActive)) {
+            heldActivity = null
+            pendingReplacementKey = null
+            automaticExpansionRequest = null
+            if (!motion.dismissForReplacement()) return@LaunchedEffect
+        }
         val changed = significantUpdates.changedActivity(currentActivities, hiddenActivityKeys)
         val incomingSlots = latestAutomaticSlots
         if (changed != null && (changed == incomingSlots.primary || changed in incomingSlots.secondaries)) {
@@ -343,6 +387,8 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                 return@LaunchedEffect
             }
         }
+        // An arrival first reflows through the camera; expand from the settled layout.
+        snapshotFlow { latestHoldingSlots }.first { !it }
         // The source may disappear or change slots while the outgoing card collapses.
         val incomingSlots = latestAutomaticSlots
         if (changed == incomingSlots.primary || changed in incomingSlots.secondaries) {
@@ -353,7 +399,7 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
         automaticExpansionRequest = null
     }
     LaunchedEffect(heldActivity, currentActivities, hiddenActivityKeys) {
-        if (heldActivity != null) {
+        if (heldActivity != null && currentActivities.any { it.key == heldActivity?.key }) {
             // Wait for actual completion, including the companion merge. Dismissal
             // releases the hold too, so an interrupted expansion cannot freeze it.
             snapshotFlow {
@@ -367,8 +413,9 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
         }
     }
     LaunchedEffect(expanded, motion.automaticallyExpanded, live?.key, interaction, activityTouchActive) {
-        if (expanded && live != null && !activityTouchActive) {
-            delay(if (motion.automaticallyExpanded) 5_000L else 10_000L)
+        // User-opened controls stay open until explicitly dismissed.
+        if (expanded && motion.automaticallyExpanded && live != null && !activityTouchActive) {
+            delay(5_000L)
             motion.dismiss()
         }
     }
@@ -378,12 +425,15 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
         SideEffect {
             onBoundsChanged(0, 0, 0, 0, false)
             onSecondaryBoundsChanged(emptyList())
+            shownSlots = presentedSlots
         }
+        if (reflowActive) LaunchedEffect(Unit) { reflow.reset() }
         return
     }
 
+    val scoresOnly = slots.secondaries.size == 2
     val collapsedH = tuning.collapsedHeightDp.dp
-    val indicatorWidth = compactIndicatorWidth(live, collapsedH)
+    val indicatorWidth = compactIndicatorWidth(live, collapsedH, scoresOnly)
     val groupedPrimary = primaryLive != null && slots.secondaries.size == 1
     val primaryCameraRadius = (cameraGuide?.horizontalRadiusDp ?: 8f) +
         if (primaryLive?.sportsScore != null) 3f else 0f
@@ -392,10 +442,10 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
             height = collapsedH.value,
             cameraRadius = primaryCameraRadius,
             cameraOffset = cameraGuide!!.centerXFromScreenCenterDp - tuning.centerXOffsetDp,
-            indicatorWidth = (if (primaryLive == null) collapsedH * .54f else compactIndicatorWidth(primaryLive, collapsedH)).value,
+            indicatorWidth = (if (primaryLive == null) collapsedH * .54f else compactIndicatorWidth(primaryLive, collapsedH, scoresOnly)).value,
             grouped = groupedPrimary,
-            leadingWidth = compactLeadingWidth(primaryLive, collapsedH).value,
-        ).dp
+            leadingWidth = compactLeadingWidth(primaryLive, collapsedH, scoresOnly).value,
+        ).dp + if (scoresOnly && primaryLive?.sportsScore?.let { it.scoreOne.isNotBlank() && it.scoreTwo.isNotBlank() } == true) collapsedH * .24f else 0.dp
     } else tuning.collapsedWidthDp.dp
     val displayWidth = screenWidthDp.takeIf { it > 0f }
         ?: LocalConfiguration.current.screenWidthDp.toFloat()
@@ -415,14 +465,44 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
     val secondaryLeadingWidth = compactLeadingWidth(secondaryActivity, collapsedH).value
     val secondaryWidth = if (slots.secondaries.size == 1)
         compactActivityPillWidth(collapsedH.value, secondaryIndicatorWidth, secondaryLeadingWidth) else collapsedH.value
-    val bubblePositions = slots.secondaries.indices.map { activityBubblePosition(it, compactLeftDp, collapsedW.value, secondaryWidth) }
-    val destinationPlacements = activityPlacements(slots, collapsedW.value, collapsedH.value, primaryCenter, secondaryIndicatorWidth, secondaryLeadingWidth)
+    val scoreBubbleWidths = slots.secondaries.mapNotNull { key ->
+        val activity = activities.firstOrNull { it.key == key }
+        val score = activity?.sportsScore
+        if (scoresOnly && score != null && score.scoreOne.isNotBlank() && score.scoreTwo.isNotBlank()) {
+            key to compactSportsScoresWidth(collapsedH.value,
+                sportsScoreLeadingWidth(score, collapsedH, true).value,
+                sportsScoreTrailingWidth(score, collapsedH, true).value)
+        } else null
+    }.toMap()
+    val bubblePositions = slots.secondaries.mapIndexed { index, key ->
+        activityBubblePosition(index, compactLeftDp, collapsedW.value, scoreBubbleWidths[key] ?: secondaryWidth)
+    }
+    val destinationPlacements = activityPlacements(slots, collapsedW.value, collapsedH.value,
+        primaryCenter, secondaryIndicatorWidth, secondaryLeadingWidth, scoreBubbleWidths)
     val placementMotion = remember { ActivityPlacementMotion(destinationPlacements,
         (cameraGuide?.horizontalRadiusDp ?: 8f) * 2f, trace = { message ->
             if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
                 android.util.Log.d("IslandSwitch", message)
-        }) }
-    LaunchedEffect(destinationPlacements) { placementMotion.retarget(destinationPlacements) }
+        }, reflow = reflow) }
+    placementMotion.cameraCenter = (cameraGuide?.centerXFromScreenCenterDp ?: tuning.centerXOffsetDp) - tuning.centerXOffsetDp
+    LaunchedEffect(destinationPlacements) {
+        // Inside the lens nothing is visible, so the new layout is adopted outright.
+        if (reflow.hidden) placementMotion.snap(destinationPlacements)
+        else placementMotion.retarget(destinationPlacements)
+    }
+    // Keyed on holding rather than the request, which clears the moment the slots swap.
+    LaunchedEffect(presentedSlots, holdingSlots) {
+        if (!holdingSlots) return@LaunchedEffect
+        if (!reflow.active) snapshotFlow { compact }.first { it }
+        val target = presentedSlots
+        if (target.keys != shownSlots.keys) {
+            // Continues from the current absorption when an emergence is interrupted.
+            reflow.collapse(shownSlots.secondaries.toSet())
+            shownSlots = target
+            snapshotFlow { placementMotion.destinationKeys }.first { it == target.keys }
+        } else shownSlots = target
+        reflow.emerge(target.secondaries.toSet())
+    }
     val primaryDestination = ActivityPlacement(primaryCenter, collapsedW.value, 1f, 1f)
     // The card belongs to the pressed activity, including its original side position.
     fun expansionPlacement(): ActivityPlacement {
@@ -462,6 +542,15 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
     // Measure the expanded content directly so font metrics cannot leave spare card height.
     val density = LocalDensity.current
     var expandedH by remember { mutableStateOf(180.dp) }
+    var deferMusicResize by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded) {
+        if (!expanded) {
+            snapshotFlow { motion.fraction == 0f }.first { it }
+            deferMusicResize = false
+        }
+    }
+    val compactDragDistance by rememberUpdatedState(
+        with(density) { (expandedH - collapsedH).toPx() }.coerceAtLeast(1f))
     val cameraX = displayWidth / 2f + (cameraGuide?.centerXFromScreenCenterDp ?: tuning.centerXOffsetDp)
     val cameraY = cameraGuide?.centerYDp ?: (tuning.topOffsetDp + collapsedH.value / 2f)
     val contentReveal = ((visibility - .15f) / .85f).coerceIn(0f, 1f)
@@ -556,30 +645,45 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                             }
                         }
                     }
-                    .pointerInput(density, expandedH, collapsedH) {
+                    .pointerInput(motion) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
                             if (!motion.expanded) return@awaitEachGesture
                             val tracker = VelocityTracker()
                             tracker.addPosition(down.uptimeMillis, down.position)
-                            val distance = with(density) { (expandedH - collapsedH).toPx() }.coerceAtLeast(1f)
+                            var distance = compactDragDistance
                             var started = false
-                            val drag = awaitVerticalTouchSlopOrCancellation(down.id) { change, overSlop ->
-                                if (overSlop < 0f && motion.beginCompactDrag()) {
-                                    started = true
-                                    change.consume()
-                                    motion.dragCompact(overSlop, distance)
+                            var finished = false
+                            var collapsing = false
+                            try {
+                                val drag = awaitVerticalTouchSlopOrCancellation(down.id) { change, overSlop ->
+                                    if (overSlop < 0f && motion.beginCompactDrag()) {
+                                        started = true
+                                        deferMusicResize = true
+                                        distance = compactDragDistance
+                                        change.consume()
+                                        motion.dragCompact(overSlop, distance)
+                                    }
                                 }
-                            }
-                            if (drag != null && started) {
-                                val completed = verticalDrag(drag.id) { change ->
-                                    tracker.addPosition(change.uptimeMillis, change.position)
-                                    motion.dragCompact(change.position.y - change.previousPosition.y, distance)
-                                    change.consume()
+                                if (drag != null && started) {
+                                    val completed = verticalDrag(drag.id) { change ->
+                                        tracker.addPosition(change.uptimeMillis, change.position)
+                                        motion.dragCompact(change.position.y - change.previousPosition.y, distance)
+                                        change.consume()
+                                    }
+                                    collapsing = motion.finishCompactDrag(tracker.calculateVelocity().y, distance, !completed)
+                                    if (collapsing) {
+                                        haptics.collapse()
+                                    }
+                                    finished = true
                                 }
-                                if (motion.finishCompactDrag(tracker.calculateVelocity().y, distance, !completed)) {
-                                    haptics.collapse()
+                            } finally {
+                                // Pointer-input disposal/cancellation must never leave dragProgress
+                                // overriding the spring at an intermediate expansion fraction.
+                                if (started && !finished) {
+                                    motion.finishCompactDrag(0f, distance, cancelled = true)
                                 }
+                                if (!collapsing) deferMusicResize = false
                             }
                         }
                     }
@@ -628,6 +732,7 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                             np?.let { Color(it.staticArtworkAccentColor).brightAccent() } ?: Color(0xFF9A9AA1)) { motion.fraction }
                         else Box {
                             ExpandedMusic(np, appear = { motion.fraction }, interactive = expanded, compactHeight = collapsedH,
+                                deferResize = deferMusicResize,
                                 onOpenSource = {
                                     openSourceApp(context, np?.packageName)
                                     motion.dismiss()
@@ -643,6 +748,8 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                         if (isSports) SharedSportsContent(live!!.sportsScore!!, collapsedH,
                             grouped = !motion.secondary && groupedPrimary,
                             celebration = sportsPresentation.changes[live.key],
+                            scoresOnly = scoresOnly,
+                            cameraSplit = !motion.secondary,
                             expansion = { motion.fraction },
                             grouping = { if (motion.secondary) 0f else expansionPlacement().grouping })
                     }
@@ -679,11 +786,11 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                     )
                     val accent = np?.let { Color(it.staticArtworkAccentColor).brightAccent() } ?: Color(0xFF34C759)
                     IslandIndicator(np, live, accent,
-                        active = motion.fraction < 1f || live?.screenCapture != null,
+                        active = motion.fraction < 1f || live?.screenCapture != null || live?.transfer != null,
                         modifier = Modifier.graphicsLayer {
                             val p = motion.fraction.coerceIn(0f, 1f)
                             transformOrigin = TransformOrigin(0f, 0f)
-                            val baseAlpha = (if (live != null && live.screenCapture == null) 1f - p else 1f) *
+                            val baseAlpha = (if (live != null && live.screenCapture == null && live.transfer == null) 1f - p else 1f) *
                                 (if (motion.secondary && live != null) lerpFloat(expansionPlacement().detail, 1f, p) else 1f) * contentReveal
                             alpha = if (isSports) 0f else if (live?.isCall == true) baseAlpha * (1f - p) else baseAlpha
 
@@ -721,6 +828,7 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                         ((height - contentEnvelopeHeight * contentScale) / 2f).roundToInt()) {
                         scaleX = contentScale
                         scaleY = contentScale
+                        alpha = reflow.contentAlpha(slots.primary)
                         // Placement already centers the scaled envelope. A center pivot would
                         // add a second (unscaledSize - scaledSize) / 2 offset down and right.
                         transformOrigin = TransformOrigin(0f, 0f)
@@ -728,8 +836,23 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                     // Compact content already has camera/corner clearance built into its layout.
                     // Fitting its whole padded rectangle to the rounded interior shrinks it again
                     // while the secondary returns outward, then jumps back at the handoff.
-                    primaryCompact.place((width - primaryCompact.width) / 2,
-                        (height - primaryCompact.height) / 2)
+                    // During the entrance overshoot, content swells about the pill's center with
+                    // the silhouette instead of sitting still inside a stretching outline.
+                    val overshoot = placementMotion.overshootScale(slots.primary)
+                    fun androidx.compose.ui.graphics.GraphicsLayerScope.swell(left: Int, top: Int) {
+                        if (overshoot == 1f) return
+                        translationX = (left - width / 2f) * (overshoot - 1f)
+                        translationY = (top - height / 2f) * (overshoot - 1f)
+                        scaleX *= overshoot
+                        scaleY *= overshoot
+                    }
+                    primaryCompact.placeWithLayer((width - primaryCompact.width) / 2,
+                        (height - primaryCompact.height) / 2) {
+                        // Fade rather than let the pill's edge cut through it on a reflow.
+                        alpha = reflow.contentAlpha(slots.primary)
+                        scaleX = overshoot
+                        scaleY = overshoot
+                    }
                     val artBounds = MusicElementMorph.art(collapsedH.value, contentTop.value, p, headerHeight.value, if (live != null) (if (live.isNavigation) 48f else 32f) else headerHeight.value)
                     val barsBounds = MusicElementMorph.visualizer(collapsedW.value,
                         collapsedH.value, expandedW.value, contentTop.value, p, headerHeight.value)
@@ -778,25 +901,29 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                         musicContentTop + (32.dp - (10.dp / .55f) / 2).toPx() * contentScale, p)
                         else if (live == null) sharedPlacement.artTop
                         else lerp((cameraLocalY - artSize.value / 2f).dp, (artBounds.top - collapsedH.value * (compactLiveIconFraction - .60f) / 2f * (1f - p)).dp, reveal).toPx()
-                    art.placeWithLayer(
-                        IslandContentBounds.position(artX, width.toFloat(), renderedArtSize.toPx(), safeInset).roundToInt(),
-                        IslandContentBounds.position(artY + MusicElementMorph.downwardArcDp(p).dp.toPx(), height.toFloat(), renderedArtSize.toPx(), safeInset).roundToInt()) {
+                    val artLeft = IslandContentBounds.position(artX, width.toFloat(), renderedArtSize.toPx(), safeInset).roundToInt()
+                    val artTop = IslandContentBounds.position(artY + MusicElementMorph.downwardArcDp(p).dp.toPx(), height.toFloat(), renderedArtSize.toPx(), safeInset).roundToInt()
+                    art.placeWithLayer(artLeft, artTop) {
                         transformOrigin = TransformOrigin(0f, 0f)
                         
                         scaleX = renderedArtSize / 54.dp
                         scaleY = scaleX
+                        alpha = reflow.contentAlpha(slots.primary)
                         shape = RoundedCornerShape(lerp(collapsedH * .60f * .32f,
                             (expandedCorner - contentTop).coerceIn(0.dp, headerHeight / 2), p) / scaleX)
                         clip = true
+                        swell(artLeft, artTop)
                     }
+                    val transferRingInset = 18.dp
                     val indicatorX = if (live != null)
-                        lerp(compactBarsX, expandedW - 18.dp - indicatorWidth, p)
+                        lerp(compactBarsX, expandedW - transferRingInset - (if (live.transfer != null) 28.dp else indicatorWidth), p)
                         else barsBounds.left.dp - 10.dp * p
                     val indicatorY = if (live != null)
-                        lerp((collapsedH - 20.dp) / 2, contentTop + (headerHeight - 20.dp) / 2, p)
+                        lerp((collapsedH - 20.dp) / 2,
+                            if (live.transfer != null) transferRingInset else contentTop + (headerHeight - 20.dp) / 2, p)
                         else barsBounds.top.dp
-                    val indicatorVisualWidth = if (live != null) indicatorWidth else lerp(collapsedH * .54f, 24.dp, p)
-                    val indicatorVisualHeight = if (live != null) 20.dp else lerp(collapsedH * .42f, 20.dp, p)
+                    val indicatorVisualWidth = if (live?.transfer != null) lerp(indicatorWidth, 28.dp, p) else if (live != null) indicatorWidth else lerp(collapsedH * .54f, 24.dp, p)
+                    val indicatorVisualHeight = if (live?.transfer != null) lerp(20.dp, 28.dp, p) else if (live != null) 20.dp else lerp(collapsedH * .42f, 20.dp, p)
                     val renderedBarsWidth = if (capture) indicatorWidth * lerpFloat(1f, contentScale, p) else if (live == null) musicBarsWidth else indicatorVisualWidth
                     val renderedBarsHeight = if (capture) 20.dp * lerpFloat(1f, contentScale, p) else if (live == null) musicBarsHeight else indicatorVisualHeight
                     val barsX = if (capture) lerpFloat(compactBarsX.toPx(),
@@ -818,13 +945,15 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                         musicContentTop + 22.dp.toPx() * contentScale, p)
                         else if (live == null) sharedPlacement.barsTop
                         else lerp((cameraLocalY - 10f).dp, indicatorY, reveal).toPx()
-                    equalizer.placeWithLayer(
-                        IslandContentBounds.position(barsX, width.toFloat(), renderedBarsWidth.toPx(), safeInset).roundToInt(),
-                        IslandContentBounds.position(barsY + MusicElementMorph.downwardArcDp(p).dp.toPx(), height.toFloat(), renderedBarsHeight.toPx(), safeInset).roundToInt()) {
+                    val barsLeft = IslandContentBounds.position(barsX, width.toFloat(), renderedBarsWidth.toPx(), safeInset).roundToInt()
+                    val barsTop = IslandContentBounds.position(barsY + MusicElementMorph.downwardArcDp(p).dp.toPx(), height.toFloat(), renderedBarsHeight.toPx(), safeInset).roundToInt()
+                    equalizer.placeWithLayer(barsLeft, barsTop) {
                         transformOrigin = TransformOrigin(0f, 0f)
                         
                         scaleX = renderedBarsWidth.toPx() / equalizer.width
                         scaleY = renderedBarsHeight.toPx() / equalizer.height
+                        alpha = reflow.contentAlpha(slots.primary)
+                        swell(barsLeft, barsTop)
                     }
                 }
             }
@@ -897,9 +1026,17 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                     }.islandEdge(if (activityKey == IslandActivities.MUSIC) musicEdge else neutralEdge,
                         expansion = { motion.fraction }) { with(density) { (collapsedH / 2).toPx() } }
                     .background(Color.Black)) {
-                    SecondaryActivityContent(np, secondaryLive, activityKey == IslandActivities.MUSIC,
-                        collapsedH,
-                        { val frame = arrivalFrame(); frame.detail + (1f - frame.detail) * transfer() })
+                    Box(Modifier.graphicsLayer {
+                        alpha = reflow.contentAlpha(activityKey)
+                        // Swell with the bubble's entrance overshoot.
+                        scaleX = placementMotion.overshootScale(activityKey)
+                        scaleY = scaleX
+                    },
+                        propagateMinConstraints = true) {
+                        SecondaryActivityContent(np, secondaryLive, activityKey == IslandActivities.MUSIC,
+                            collapsedH,
+                            { val frame = arrivalFrame(); frame.detail + (1f - frame.detail) * transfer() }, scoresOnly = scoresOnly)
+                    }
                 }
             }
                 }
@@ -919,7 +1056,7 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                 .background(Color.Black)) {
                 if (motion.secondary) {
                     if (primaryLive == null) CollapsedMusic(np, collapsedH)
-                    else PrimaryCompanionContent(primaryLive, collapsedH, groupedPrimary) {
+                    else PrimaryCompanionContent(primaryLive, collapsedH, groupedPrimary, scoresOnly) {
                         primaryCompanionPlacement().grouping
                     }
                 }
@@ -977,7 +1114,7 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                     // Only the selected activity may sit above the card. Pair companions
                     // return underneath it, just like companions in the three-activity layout.
                     zIndex = if (ownsPromotion) 2f else 0f)
-                val visible = placementMotion.progress.value >= .98f && progress < .25f && (!motion.transferringActivities || ownsPromotion) &&
+                val visible = placementMotion.progress.value >= .98f && !reflow.active && progress < .25f && (!motion.transferringActivities || ownsPromotion) &&
                     movingLeft >= 0 && movingLeft + width <= constraints.maxWidth && movingTop + with(density) { collapsedH.roundToPx() } <= constraints.maxHeight
                 ActivityTouchBounds(activityKey, movingLeft, movingTop, if (visible) width else 0,
                     if (visible) with(density) { collapsedH.roundToPx() } else 0)
@@ -991,7 +1128,9 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                 (displayWidth / 2f + tuning.centerXOffsetDp + it.center - it.width / 2f).dp.roundToPx()
             } } ?: left
             val touchWidth = compactTouch?.let { with(density) { it.width.dp.roundToPx() } } ?: pill.width
-            onBoundsChanged(touchLeft, top, if (visible) touchWidth else 0, if (visible) pill.height else 0,
+            // Nothing is safely pressable while the activities pass through the camera.
+            val touchable = visible && !reflow.active
+            onBoundsChanged(touchLeft, top, if (touchable) touchWidth else 0, if (touchable) pill.height else 0,
                 visible && (motion.transferringActivities || motion.expanded || progress >= IslandGrowth.hapticProgress))
         }
     }
@@ -1004,6 +1143,8 @@ private fun openSourceApp(context: android.content.Context, packageName: String?
     runCatching { context.startActivity(intent) }
 }
 
+private class RetainedValue<T>(var value: T)
+
 /** Dispatch the notification's click token, including broadcast/service PendingIntents. */
 private fun openLiveActivity(context: android.content.Context, live: com.island.dynamicisland.live.LiveUpdate) {
     val intent = live.contentIntent
@@ -1015,15 +1156,15 @@ private fun openLiveActivity(context: android.content.Context, live: com.island.
 @Composable
 private fun PrimaryCompanionContent(live: com.island.dynamicisland.live.LiveUpdate,
                                     height: androidx.compose.ui.unit.Dp,
-                                    grouped: Boolean, grouping: () -> Float) {
-    CompactLiveActivity(live, height, grouped, grouping = grouping())
+                                    grouped: Boolean, scoresOnly: Boolean, grouping: () -> Float) {
+    CompactLiveActivity(live, height, grouped, grouping = grouping(), scoresOnly = scoresOnly)
 }
 
 /** Animation ticks must not recompose the expanded card, shared artwork, and indicator. */
 @Composable
 private fun SharedSportsContent(score: com.island.dynamicisland.live.SportsScore,
                                 height: androidx.compose.ui.unit.Dp, grouped: Boolean,
-                                celebration: SportsScoreChange?,
+                                celebration: SportsScoreChange?, scoresOnly: Boolean, cameraSplit: Boolean,
                                 expansion: () -> Float, grouping: () -> Float) {
-    CompactSportsLiveActivity(score, height, grouped, expansion(), celebration, grouping())
+    CompactSportsLiveActivity(score, height, grouped, expansion(), celebration, grouping(), scoresOnly, cameraSplit)
 }

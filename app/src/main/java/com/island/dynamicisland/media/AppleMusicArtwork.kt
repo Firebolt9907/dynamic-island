@@ -15,14 +15,38 @@ internal data class AppleArtwork(val image: Bitmap?, val motionUrl: String?, val
 internal object AppleMusicArtwork {
     private const val MAX_RESPONSE = 4 * 1024 * 1024
 
-    fun lookup(title: String, artist: String, album: String, durationMs: Long): AppleArtwork {
-        if (title.isBlank() || artist.isBlank() || title == "Unknown") return AppleArtwork(null, null)
-        val term = URLEncoder.encode("$artist $title $album", "UTF-8")
-        val results = JSONObject(String(read("https://itunes.apple.com/search?term=$term&entity=song&limit=15&country=us"), Charsets.UTF_8))
+    @Volatile private var cacheDirectory: java.io.File? = null
+
+    fun init(context: android.content.Context) {
+        cacheDirectory = java.io.File(context.cacheDir, "apple-album-artwork")
+    }
+
+    // An album artist avoids splitting compilations and featured-artist tracks. Never
+    // use a media ID: Apple Music changes those for downloaded copies.
+    internal fun cacheKey(title: String, artist: String, album: String, albumArtist: String = ""): List<String> =
+        if (album.isNotBlank()) listOf("album", normalize(album), normalize(albumArtist.ifBlank { artist }))
+        else listOf("track", normalize(title), normalize(artist))
+
+    fun lookup(title: String, artist: String, album: String, durationMs: Long, albumArtist: String = ""): AppleArtwork {
+        val key = cacheKey(title, artist, album, albumArtist)
+        val file = cacheDirectory?.let { directory ->
+            val hash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(key.joinToString("\u0000").toByteArray()).joinToString("") { "%02x".format(it) }
+            java.io.File(directory, "$hash.json")
+        }
+        readCached(file)?.let { return it }
+        val searchArtist = albumArtist.ifBlank { artist }
+        if (searchArtist.isBlank() || (album.isBlank() && (title.isBlank() || title == "Unknown"))) return AppleArtwork(null, null)
+        // Album lookup also works when downloaded tracks have different titles or durations.
+        val albumLookup = album.isNotBlank()
+        val term = URLEncoder.encode(if (albumLookup) "$searchArtist $album" else "$artist $title", "UTF-8")
+        val entity = if (albumLookup) "album" else "song"
+        val results = JSONObject(String(read("https://itunes.apple.com/search?term=$term&entity=$entity&limit=25&country=us"), Charsets.UTF_8))
             .getJSONArray("results")
         val candidates = (0 until results.length()).map { results.getJSONObject(it) }
         val match = candidates.firstOrNull {
-            matches(title, artist, album, durationMs, it.optString("trackName"), it.optString("artistName"),
+            if (albumLookup) matchesAlbum(album, searchArtist, it.optString("collectionName"), it.optString("artistName"))
+            else matches(title, artist, album, durationMs, it.optString("trackName"), it.optString("artistName"),
                 it.optString("collectionName"), it.optLong("trackTimeMillis"))
         } ?: return AppleArtwork(null, null)
         val image = runCatching {
@@ -35,8 +59,35 @@ internal object AppleMusicArtwork {
             val html = String(read("https://music.apple.com/us/album/$id"), Charsets.UTF_8)
             motionUrl(html)
         }.getOrNull()
-        return AppleArtwork(image, motion, image?.let(ArtworkColors::fromBitmap))
+        val artwork = AppleArtwork(image, motion, image?.let(ArtworkColors::fromBitmap))
+        if (image != null) runCatching {
+            file?.parentFile?.mkdirs()
+            val bytes = java.io.ByteArrayOutputStream().also { image.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+            val json = JSONObject().put("image", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+                .put("motion", motion ?: "")
+            file?.let {
+                val temporary = java.io.File(it.path + ".tmp")
+                temporary.writeText(json.toString())
+                check(temporary.renameTo(it))
+                // Bound static artwork storage by albums; videos have their own byte limit.
+                it.parentFile?.listFiles()?.filter { entry -> entry.extension == "json" }
+                    ?.sortedByDescending { entry -> entry.lastModified() }?.drop(128)?.forEach { entry -> entry.delete() }
+            }
+        }
+        return artwork
     }
+
+    private fun readCached(file: java.io.File?): AppleArtwork? = runCatching {
+        if (file == null || !file.isFile) return null
+        val json = JSONObject(file.readText())
+        val bytes = android.util.Base64.decode(json.getString("image"), android.util.Base64.DEFAULT)
+        val image = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        file.setLastModified(System.currentTimeMillis())
+        AppleArtwork(image, json.optString("motion").takeIf { it.isNotBlank() && trustedUrl(it) }, ArtworkColors.fromBitmap(image))
+    }.getOrNull()
+
+    internal fun matchesAlbum(album: String, artist: String, candidateAlbum: String, candidateArtist: String): Boolean =
+        normalize(album) == normalize(candidateAlbum) && normalize(artist) == normalize(candidateArtist)
 
     internal fun matches(title: String, artist: String, album: String, duration: Long,
                          candidateTitle: String, candidateArtist: String, candidateAlbum: String,

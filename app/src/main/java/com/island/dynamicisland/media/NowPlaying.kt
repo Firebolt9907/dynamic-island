@@ -25,6 +25,7 @@ data class NowPlaying(
     val appleAlbumArt: Bitmap? = null,
     val appleMotionUrl: String? = null,
     val appleArtworkAccentColor: Int? = null,
+    val albumArtist: String = "",
 ) {
     /** Color and bitmap use exactly the same source priority in every island mode. */
     val staticAlbumArt: Bitmap? get() = albumArt ?: appleAlbumArt
@@ -90,15 +91,16 @@ object MediaRepository {
 
     private val artworkScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
     private var artworkJob: kotlinx.coroutines.Job? = null
-    private var artworkKey: List<Any>? = null
-    private val artworkCache = object : LinkedHashMap<List<Any>, Pair<Long, AppleArtwork>>(16, .75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<List<Any>, Pair<Long, AppleArtwork>>?) = size > 48
+    private var artworkKey: List<String>? = null
+    private val artworkCache = object : LinkedHashMap<List<String>, Pair<Long, AppleArtwork>>(16, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<List<String>, Pair<Long, AppleArtwork>>?) = size > 48
     }
 
     fun update(np: NowPlaying?) {
-        val key = np?.let { listOf(it.title, it.artist, it.album, it.durationMs) }
+        val key = np?.let { AppleMusicArtwork.cacheKey(it.title, it.artist, it.album, it.albumArtist) }
         val cached = key?.let { artworkCache[it] }?.takeIf {
-            android.os.SystemClock.elapsedRealtime() - it.first < 30 * 60 * 1000L
+            it.second.image != null || it.second.motionUrl != null ||
+                android.os.SystemClock.elapsedRealtime() - it.first < 60 * 1000L
         }?.second
         val previous = _nowPlaying.value
         _nowPlaying.value = np?.copy(
@@ -106,13 +108,13 @@ object MediaRepository {
             appleMotionUrl = cached?.motionUrl ?: previous?.takeIf { key == artworkKey }?.appleMotionUrl,
             appleArtworkAccentColor = cached?.accentColor ?: previous?.takeIf { key == artworkKey }?.appleArtworkAccentColor,
         )
-        if (key == artworkKey && (artworkJob?.isActive == true || cached != null)) return
+        if (key == artworkKey && artworkJob?.isActive == true) return
         artworkJob?.cancel()
         artworkKey = key
-        if (np == null || key == null) return
+        if (np == null || key == null || cached != null) return
         artworkJob = artworkScope.launch {
             val artwork = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                try { AppleMusicArtwork.lookup(np.title, np.artist, np.album, np.durationMs) }
+                try { AppleMusicArtwork.lookup(np.title, np.artist, np.album, np.durationMs, np.albumArtist) }
                 catch (e: kotlinx.coroutines.CancellationException) { throw e }
                 catch (_: Exception) { AppleArtwork(null, null) }
             }

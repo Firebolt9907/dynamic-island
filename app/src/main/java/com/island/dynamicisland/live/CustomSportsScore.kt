@@ -23,6 +23,19 @@ internal fun sportsSectionTitle(source: String): String = source
     .replace(Regex("\\bLeaders\\b", RegexOption.IGNORE_CASE), "")
     .replace(Regex("\\s+"), " ").trim()
 
+/** Pregame RemoteViews hide score views but still publish both team identities. */
+internal fun sportsScoreValues(scoreOne: String?, scoreTwo: String?,
+                               hasTeamOne: Boolean, hasTeamTwo: Boolean): Pair<String, String>? {
+    if (scoreOne != null && scoreTwo != null) return scoreOne to scoreTwo
+    if (scoreOne.isNullOrBlank() && scoreTwo.isNullOrBlank() && hasTeamOne && hasTeamTwo) return "" to ""
+    return null
+}
+
+internal fun isSportsPrimaryStatusField(name: String): Boolean =
+    name.contains("game_status", ignoreCase = true) ||
+        name.contains("status_primary", ignoreCase = true) ||
+        name.equals("tv_pre_status_line_one", ignoreCase = true)
+
 data class SportsScore(
     val teamOne: String?,
     val scoreOne: String,
@@ -36,10 +49,19 @@ data class SportsScore(
     val secondaryStatus: String? = null,
     val teamOneColor: Int = 0xFFE4E4E7.toInt(),
     val teamTwoColor: Int = 0xFFE4E4E7.toInt(),
+    val possession: SportsPossession? = null,
+    val basesGraphic: Bitmap? = null,
+    val setScores: List<SportsSetScore> = emptyList(),
+    val gameClockId: Int? = null,
+    val gameClockText: String? = null,
+    val lastFootballPlay: FootballPlay? = null,
+    val retainedFootballField: FootballFieldPosition? = null,
+    val fieldContextStale: Boolean = false,
+    val possessionStale: Boolean = false,
 ) {
     val gameStatus: String get() = listOfNotNull(status, secondaryStatus)
         .flatMap { it.lines() }.map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString("\n")
-    val formattedScore: String get() = "$scoreOne - $scoreTwo"
+    val formattedScore: String get() = if (scoreOne.isBlank() && scoreTwo.isBlank()) "" else "$scoreOne - $scoreTwo"
     val summaryTitle: String? get() = if (!teamOne.isNullOrBlank() && !teamTwo.isNullOrBlank()) "$teamOne vs $teamTwo" else null
 }
 
@@ -67,6 +89,12 @@ fun readCustomSportsScore(context: Context, packageName: String, content: Remote
     var teamTwoLogo: Bitmap? = null
     var status: String? = null
     var secondaryStatus: String? = null
+    var pregameBroadcast: String? = null
+    val possessionCandidates = mutableListOf<SportsPossession>()
+    var basesGraphic: Bitmap? = null
+    val setScores = mutableListOf<SportsSetScore>()
+    var gameClockId: Int? = null
+    var gameClockText: String? = null
     val notes = mutableListOf<String>()
     val players = mutableListOf<SportsPlayer>()
     val playerFields = mutableSetOf<View>()
@@ -90,9 +118,35 @@ fun readCustomSportsScore(context: Context, packageName: String, content: Remote
     fun resourceName(view: View): String = if (view.id == View.NO_ID) "" else
         runCatching { (sourceResources ?: view.resources).getResourceEntryName(view.id) }.getOrDefault("")
 
+    fun alphaMask(drawable: android.graphics.drawable.Drawable): List<Int> {
+        val oldBounds = android.graphics.Rect(drawable.bounds)
+        val bitmap = Bitmap.createBitmap(24, 24, Bitmap.Config.ARGB_8888)
+        try {
+            drawable.setBounds(0, 0, 24, 24)
+            drawable.draw(Canvas(bitmap))
+        } finally { drawable.bounds = oldBounds }
+        val pixels = IntArray(24 * 24)
+        bitmap.getPixels(pixels, 0, 24, 0, 0, 24, 24)
+        return pixels.map { android.graphics.Color.alpha(it) }
+    }
+    val turnIcons by lazy {
+        listOf("football_possession" to "Possession", "ic_ball_possession" to "Possession",
+            "ic_tennis_ball" to "Serving").mapNotNull { (name, label) ->
+            runCatching {
+                val resources = sourceResources ?: return@runCatching null
+                val id = resources.getIdentifier(name, "drawable", packageName)
+                if (id == 0) null else alphaMask(resources.getDrawable(id, null)) to label
+            }.getOrNull()
+        }
+    }
+
     fun visit(view: View, inheritedTeam: Int = 0) {
-        if (view.visibility != View.VISIBLE) return
+        if (view.visibility != View.VISIBLE || view.alpha <= 0f) return
         val idName = resourceName(view)
+        if (view is android.widget.Chronometer && view.id != View.NO_ID && isSportsGameClockField(idName)) {
+            gameClockId = view.id
+            gameClockText = view.text.toString().trim()
+        }
         // ESPN keeps each player's portrait, name and statistics in one row.
         // Preserve that relationship rather than flattening the row into text.
         if (view is ViewGroup) {
@@ -116,8 +170,27 @@ fun readCustomSportsScore(context: Context, packageName: String, content: Remote
         }
 
         if (view is ImageView) {
+            if (idName.equals("iv_bases", true) || idName.equals("base_occupancy", true)) {
+                basesGraphic = extractBitmap(view)
+            }
+            val indicatorTeam = when {
+                currentTeam in 1..2 -> currentTeam
+                idName.startsWith("home_", ignoreCase = true) -> 1
+                idName.startsWith("away_", ignoreCase = true) -> 2
+                else -> 0
+            }
+            if (indicatorTeam in 1..2 && view.drawable != null) {
+                val label = sportsPossessionLabel(idName, view.contentDescription?.toString().orEmpty())
+                    ?: if (idName.matches(Regex("iv_live_team_(one|two)_indicator"))) {
+                        val mask = alphaMask(view.drawable)
+                        turnIcons.firstOrNull { (candidate, _) ->
+                            sportsTurnIconMatches(candidate, mask)
+                        }?.second
+                    } else null
+                if (label != null) possessionCandidates += SportsPossession(indicatorTeam, label)
+            }
             val isLogo = idName.contains("logo", ignoreCase = true) ||
-                idName.contains("iv_team", ignoreCase = true) ||
+                (idName.contains("iv_team", ignoreCase = true) && !idName.contains("indicator", ignoreCase = true)) ||
                 idName.contains("team_icon", ignoreCase = true)
 
             if (isLogo) {
@@ -135,6 +208,8 @@ fun readCustomSportsScore(context: Context, packageName: String, content: Remote
         if (view is TextView && view !in playerFields) {
             val text = view.text?.toString()?.trim().orEmpty()
             when {
+                isSportsSetScoreField(idName) && text.isNotBlank() ->
+                    setScores.add(SportsSetScore(currentTeam.takeIf { it in 1..2 }, text))
                 idName.contains("score_one", ignoreCase = true) || idName.contains("home_score", ignoreCase = true) || (currentTeam == 1 && idName.contains("score", ignoreCase = true)) -> {
                     scoreOne = text
                 }
@@ -148,7 +223,9 @@ fun readCustomSportsScore(context: Context, packageName: String, content: Remote
                     teamTwo = text
                 }
                 idName.contains("status_secondary", ignoreCase = true) -> secondaryStatus = text
-                idName.contains("game_status", ignoreCase = true) || idName.contains("status_primary", ignoreCase = true) -> status = text
+                isSportsPrimaryStatusField(idName) -> if (text.isNotBlank()) status = text
+                idName.equals("tv_network_chip", ignoreCase = true) ||
+                    idName.equals("tv_pre_broadcast_overflow", ignoreCase = true) -> if (text.isNotBlank()) pregameBroadcast = text
                 idName.contains("note_message", ignoreCase = true) && text.isNotBlank() -> {
                     val label = notes.lastOrNull()
                     if (label != null && pendingNoteLabel) notes[notes.lastIndex] = "$label · $text"
@@ -173,7 +250,12 @@ fun readCustomSportsScore(context: Context, packageName: String, content: Remote
         sample.getPixels(pixels, 0, 32, 0, 0, 32, 32)
         dominantTeamColor(pixels)
     }.getOrDefault(0xFFE4E4E7.toInt())
-    if (scoreOne != null && scoreTwo != null) {
-        SportsScore(teamOne, scoreOne!!, teamTwo, scoreTwo!!, status, teamOneLogo, teamTwoLogo, notes.distinct(), assignSportsPlayerSides(players, packageName.equals("com.espn.score_center", ignoreCase = true)), secondaryStatus, logoColor(teamOneLogo), logoColor(teamTwoLogo))
-    } else null
+    sportsScoreValues(scoreOne, scoreTwo,
+        !teamOne.isNullOrBlank() || teamOneLogo != null,
+        !teamTwo.isNullOrBlank() || teamTwoLogo != null)?.let { (first, second) ->
+        SportsScore(teamOne, first, teamTwo, second, status, teamOneLogo, teamTwoLogo, notes.distinct(), assignSportsPlayerSides(players, packageName.equals("com.espn.score_center", ignoreCase = true)), secondaryStatus ?: pregameBroadcast?.takeIf { first.isBlank() && second.isBlank() }, logoColor(teamOneLogo), logoColor(teamTwoLogo),
+            resolveSportsPossession(possessionCandidates).takeUnless {
+                first.isBlank() || second.isBlank() || isSportsFinalStatus(status)
+            }, basesGraphic, setScores.distinct(), gameClockId, gameClockText)
+    }
 }.getOrNull()

@@ -261,6 +261,12 @@ private fun CalibrationCard() {
         TuneSlider("Expanded corner", tuning.expandedCornerDp, IslandTuning.cornerRange, "dp") {
             IslandConfig.update(tuning.copy(expandedCornerDp = it, useDeviceCorners = false))
         }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("Reflow activities through camera", color = Color(0xFFCFCFD4), fontSize = 14.sp)
+            androidx.compose.material3.Switch(checked = tuning.reflowThroughCamera,
+                onCheckedChange = { IslandConfig.update(tuning.copy(reflowThroughCamera = it)) })
+        }
     }
 }
 

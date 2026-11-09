@@ -421,6 +421,82 @@ Compact mode has no video player.
 Power saving and reduced-motion policy disable the video; pausing music pauses it.
 Always use DroidMirror for visual verification.
 
+## Sports possession and turns
+
+Sports score changes use NumericTickerText in expanded and compact views, including
+score-only three-activity bubbles. The stats section heading is a toggle with a
+rotating chevron; collapsing it hides notes/player rows while retaining the
+scoreboard and field context. Collapsed stats use a 4 dp bottom inset and a compact
+heading row. Scoring-event explanations are rendered separately at readable sizes,
+without the stats chevron, and remain visible when player stats are collapsed.
+The stats state is keyed to the activity and is not reset
+by routine stat-title changes. Reduced motion and power saving disable the
+section/chevron transition; compact scores retain the ticker thermal policy.
+
+Native game clocks: a visible `Chronometer` explicitly identified as a game,
+match, period or primary-status clock is retained directly in the expanded card.
+The original RemoteViews controls its start/stop state, base and count direction.
+The timer's text changes feed the existing numeric ticker animation. ESPN's text
+snapshots also animate their changed digits when notifications arrive; multiline
+status is rendered as separate ticker lines. No additional game-clock timer is created.
+Updates reinflate the timer, and hidden cards stop ticking through view visibility.
+Shot/play/timeout clocks are excluded. Plain text clocks (including ESPN's current
+football layout) remain notification snapshots; no running state is inferred from
+successive values. This avoids drifting through football stoppages.
+
+The ESPN debug fixture accepts `--ez nativeClock true --ez clockRunning true
+--ei clockSeconds 318`; repost the same fixture ID with `clockRunning false` to
+exercise a stopped clock, or `--ez clockCountdown false` for a count-up sport.
+
+Expanded scoreboards also render source-backed sport context: football field
+position with a first-down target when possession and down/distance are known;
+ESPN's published baseball base-occupancy graphic and explicit out count; and
+serving/batting summaries plus explicitly named set-score fields. Unknown team
+aliases, missing down/distance, unsupported court coordinates and missing source
+fields retain their original text. Field orientation fixes team one's goal line
+at the left and team two's at the right; it does not claim physical stadium direction.
+The first-down line is always orange-yellow. Ball/target changes use bounded,
+interruptible springs while expanded. A translucent possession-team trail spans
+the previous and current observed yard lines; clock-only updates preserve it.
+Confirmed turnovers, scores and period changes reset movement inference. Missing
+field/possession panels retain the last known field and trail at 55% opacity rather
+than erasing them. Fresh source context restores full brightness; historical context
+never creates a new play. Finals, changed matchups and notification removal clear
+the retained field. Missing possession retains a dim last-known badge within the
+same score/period; confirmed possession replaces it, while score/period changes
+clear an unconfirmed owner. Movement is inferred from notification snapshots and can
+include penalties or multiple plays, rather than a verified individual play result.
+Hidden cards and reduced-motion/power-saving policies snap to the latest position.
+There is no sports API polling or independent game-clock timer.
+
+Football fixture: use `--es type espn --es team1 WIS --es team2 Iowa
+--es status Q1 --ei possession 2` and the `context` string
+`1st & 10\nIowa 29` (with an actual newline) on the debug receiver. `possession 0`
+keeps the ball position but omits the first-down target rather than guessing direction.
+
+Scoreboards show a larger white dot with a black rim over the bottom-inner
+corner of the source-identified team's logo. Score-only compact pills place a
+smaller dot centered beneath the score. The field graphic omits duplicate team labels. The parser accepts visible, team-associated possession,
+serving and batting fields. ESPN's generic indicator is also matched against its
+possession/tennis-ball assets; generic winner/favorite arrows do not qualify.
+Omitted indicators retain a dim last-known marker while the same score/period continues; confirmed turn updates replace it. Pregame and final scores do
+not show a turn marker. This uses notification data and makes no sports API requests.
+
+Debug fixture (through the real notification parser):
+
+```sh
+adb shell am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --es type espn --es status Q1 --ei possession 1 --ei id 1788
+adb shell am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --es type espn --es status Q1 --ei possession 2 --ei id 1788
+adb shell am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --es type espn --es status Q1 --ei possession 0 --ei id 1788
+adb shell am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --ez inspectActivities true
+adb shell am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --es type espn --ei id 1788 --ez clear true
+```
+
+Verify marker switching/clearing and compact/expanded placement in DroidMirror.
+Unit tests cover explicit turn semantics, winner rejection and conflicting/missing
+team evidence. Phone verification was blocked by a disconnected ADB device and
+DroidMirror timeouts when this feature was added.
+
 ## Synced lyrics
 
 Expanded music adds one current lyric line, with word/syllable highlighting where
@@ -429,7 +505,9 @@ lines scroll horizontally with faded edges, with no ellipsis. Line-synced scroll
 uses each line's playback duration, including short holds at the start/end, rather
 than a fixed marquee speed. Pause, seek, and playback speed affect it immediately.
 Timing controls and sync/source labels are hidden. The island reveals newly loaded
-lyrics with a 360 ms height animation. Gaps and music-note placeholders longer than two seconds reserve no space;
+lyrics with a 360 ms height animation. During an upward swipe, content resizing
+is deferred at the visible height. Releasing back to expanded animates to the latest
+lyric height; a committed collapse retains the held height until fully closed. Gaps and music-note placeholders longer than two seconds reserve no space;
 the same height animation reveals the next actual sung line. Gaps up to two seconds
 retain the row and show three dots that brighten and grow sequentially toward the
 next line, following the playback clock. Timed syllables subtly lift and brighten over their first 160 ms, then gently
@@ -468,3 +546,29 @@ The default fixture checks Cruel Summer / Taylor Swift / Lover (178426 ms). Insp
 expanded lyrics with DroidMirror: pause/resume, seek into an instrumental gap,
 skip rapidly, observe a long line scrolling through the fade, and collapse. Confirm the controls remain usable,
 no stale lyrics appear after skipping, and compact mode continues to show artwork.
+
+## File transfer activity fallback
+
+Transfer detection uses notification content rather than an app allowlist. English
+upload/download, backup, sending/receiving and file-sync/copy headings can qualify
+with ongoing or structured progress evidence. Text percentages are a fallback;
+Android progress takes precedence, and indeterminate progress has no percentage.
+Summaries, media, incoming calls and auto-cancel notifications retain their exclusions.
+Completed/failed text cannot qualify through this fallback. Other languages retain
+normal category/progress eligibility; this is not universal semantic detection.
+Expanded transfers show direction, status, a percentage when known, a clean progress
+track, and the source notification's PendingIntent controls.
+
+The debug receiver's `--es type transfer` posts a generic notification through the
+real listener. It accepts `title`, `text`, `progress`, `textOnly`, `indeterminate`,
+`ongoing`, and `autoCancel`. For example:
+
+```sh
+adb shell 'am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --es type transfer --es title "Uploading photos" --ei progress 42'
+adb shell 'am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --es type transfer --es title "Syncing clipboard file" --es text "Receiving from Mac · 29%" --ez textOnly true'
+adb shell 'am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --es type transfer --es title "Downloading archive.zip" --ez indeterminate true'
+adb shell am broadcast -n com.island.dynamicisland/.LiveUpdateDemoReceiver --ez clear true
+```
+
+Use DroidMirror to inspect compact and expanded layouts. Unit tests also cover
+backup, copying, paused state, stale indeterminate values and unrelated messages.

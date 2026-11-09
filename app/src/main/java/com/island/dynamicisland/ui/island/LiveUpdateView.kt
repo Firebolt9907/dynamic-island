@@ -1,5 +1,8 @@
 package com.island.dynamicisland.ui.island
 
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.animation.animateColorAsState
@@ -23,18 +26,26 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TileMode
@@ -76,6 +87,14 @@ internal fun IslandArtwork(np: NowPlaying?, live: LiveUpdate?, size: Dp, corner:
             androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.WifiTethering,
                 "Mobile hotspot", Modifier.size(size * .65f), tint = Color(live.accentColor))
         }
+    } else if (live?.transfer != null) {
+        Box(modifier.size(size), contentAlignment = Alignment.Center) {
+            androidx.compose.material3.Icon(when (live.transfer.direction) {
+                com.island.dynamicisland.live.TransferDirection.UPLOAD -> androidx.compose.material.icons.Icons.Default.FileUpload
+                com.island.dynamicisland.live.TransferDirection.DOWNLOAD -> androidx.compose.material.icons.Icons.Default.FileDownload
+                com.island.dynamicisland.live.TransferDirection.SYNC -> androidx.compose.material.icons.Icons.Default.Sync
+            }, live.transfer.label, Modifier.size(size * .7f), tint = Color(live.accentColor))
+        }
     } else if (live?.screenCapture != null) {
         Box(modifier.size(size), contentAlignment = Alignment.Center) {
             CaptureSymbol(live, size * .55f)
@@ -84,8 +103,14 @@ internal fun IslandArtwork(np: NowPlaying?, live: LiveUpdate?, size: Dp, corner:
         modifier.size(size), contentAlignment = Alignment.Center,
     ) {
         val isEspn = live.packageName.contains("espn", ignoreCase = true)
-        val bitmap = live.sportsScore?.teamOneLogo ?: (if (isEspn) null else live.icon)
-        bitmap?.let { Image(it.asImageBitmap(), live.appName, Modifier.fillMaxSize().padding(size * liveIconInset())) }
+        val teamLogo = live.sportsScore?.teamOneLogo
+        val bitmap = teamLogo ?: (if (isEspn) null else live.icon)
+        // live.icon is the notification small icon, which Android treats as an
+        // alpha mask and always tints. Some apps (e.g. ChatGPT) draw it in black,
+        // so rendering it raw on the black island makes it invisible.
+        val iconTint = if (teamLogo == null) androidx.compose.ui.graphics.ColorFilter.tint(Color(live.accentColor)) else null
+        bitmap?.let { Image(it.asImageBitmap(), live.appName, Modifier.fillMaxSize().padding(size * liveIconInset())
+            .then(live.sportsScore?.let { score -> Modifier.sportsPossession(score, 1, logo = true) } ?: Modifier), colorFilter = iconTint) }
             ?: Text(if (isEspn) "" else live.appName.take(1), color = Color(live.accentColor), fontSize = 22.sp)
     }
 }
@@ -99,8 +124,9 @@ private fun indicatorStyle(live: LiveUpdate) = TextStyle(
 )
 
 @Composable
-internal fun sportsScoreLeadingWidth(score: SportsScore, height: Dp): Dp {
+internal fun sportsScoreLeadingWidth(score: SportsScore, height: Dp, scoresOnly: Boolean = false): Dp {
     val logoSize = height * .62f
+    if (score.scoreOne.isBlank()) return logoSize
     val style = TextStyle(
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
@@ -108,12 +134,13 @@ internal fun sportsScoreLeadingWidth(score: SportsScore, height: Dp): Dp {
         fontFeatureSettings = "tnum",
     )
     val measured = rememberTextMeasurer().measure(score.scoreOne, style, maxLines = 1, softWrap = false)
-    return logoSize + with(LocalDensity.current) { measured.size.width.toDp() } + 6.dp
+    return (if (scoresOnly) 0.dp else logoSize + 6.dp) + with(LocalDensity.current) { measured.size.width.toDp() }
 }
 
 @Composable
-internal fun sportsScoreTrailingWidth(score: SportsScore, height: Dp): Dp {
+internal fun sportsScoreTrailingWidth(score: SportsScore, height: Dp, scoresOnly: Boolean = false): Dp {
     val logoSize = height * .62f
+    if (score.scoreTwo.isBlank()) return logoSize
     val style = TextStyle(
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
@@ -121,13 +148,13 @@ internal fun sportsScoreTrailingWidth(score: SportsScore, height: Dp): Dp {
         fontFeatureSettings = "tnum",
     )
     val measured = rememberTextMeasurer().measure(score.scoreTwo, style, maxLines = 1, softWrap = false)
-    return logoSize + with(LocalDensity.current) { measured.size.width.toDp() } + 6.dp
+    return (if (scoresOnly) 0.dp else logoSize + 6.dp) + with(LocalDensity.current) { measured.size.width.toDp() }
 }
 
 @Composable
-internal fun compactLeadingWidth(live: LiveUpdate?, height: Dp): Dp {
+internal fun compactLeadingWidth(live: LiveUpdate?, height: Dp, scoresOnly: Boolean = false): Dp {
     if (live?.sportsScore != null) {
-        return sportsScoreLeadingWidth(live.sportsScore, height)
+        return sportsScoreLeadingWidth(live.sportsScore, height, scoresOnly)
     }
     return height * if (live == null) .60f else compactLiveIconFraction
 }
@@ -135,14 +162,16 @@ internal fun compactLeadingWidth(live: LiveUpdate?, height: Dp): Dp {
 @Composable
 private fun indicatorLabel(live: LiveUpdate): String = live.countdown?.let { countdownTime(it) } ?: live.stopwatch?.let { stopwatchTime(it) }
     ?: if (live.isNavigation) live.turnDistance ?: "Next turn"
+    else if (live.transfer?.paused == true) "Paused"
     else compactLiveStatus(live.status, live.progress, live.text, live.details)
 
 @Composable
-internal fun compactIndicatorWidth(live: LiveUpdate?, height: Dp = 36.dp): Dp {
+internal fun compactIndicatorWidth(live: LiveUpdate?, height: Dp = 36.dp, scoresOnly: Boolean = false): Dp {
     if (live == null) return 24.dp
     if (live.sportsScore != null) {
-        return sportsScoreTrailingWidth(live.sportsScore, height)
+        return sportsScoreTrailingWidth(live.sportsScore, height, scoresOnly)
     }
+    if (live.transfer != null) return 20.dp
     live.customParts?.let { parts ->
         // Reserve enough digits at hour boundaries without imposing a fixed empty slot.
         // The original widget still owns the actual displayed running/paused value.
@@ -161,6 +190,20 @@ internal fun compactIndicatorWidth(live: LiveUpdate?, height: Dp = 36.dp): Dp {
 @Composable
 internal fun IslandIndicator(np: NowPlaying?, live: LiveUpdate?, color: Color, modifier: Modifier, active: Boolean = true) {
     if (live == null) Equalizer(color, playing = np?.isPlaying == true, modifier = modifier)
+    else if (live.transfer != null) {
+        val tint = Color(live.accentColor)
+        val progress = rememberLiveProgress(live.progress ?: 0f, active && !live.transfer.paused)
+        val ring = modifier.size(20.dp)
+        if (live.indeterminate && !live.transfer.paused && active &&
+            !com.island.dynamicisland.power.LocalPowerSaveMode.current) {
+            CircularProgressIndicator(modifier = ring, color = tint, strokeWidth = 3.dp,
+                trackColor = tint.copy(alpha = .35f))
+        } else {
+            CircularProgressIndicator(progress = { progress.value }, modifier = ring,
+                color = tint.copy(alpha = if (live.transfer.paused) .65f else 1f),
+                strokeWidth = 3.dp, trackColor = tint.copy(alpha = .35f), gapSize = 0.dp)
+        }
+    }
     else if (live.customParts != null && live.customContent != null) {
         CustomNotificationContent(live.customContent, live.key, false, active,
             modifier.size(compactIndicatorWidth(live), 20.dp), live.customParts, timerOnly = true, compactTimer = true,
@@ -214,18 +257,38 @@ private fun ExpandedLiveUpdateContent(live: LiveUpdate, appear: () -> Float, int
         return
     }
     live.sportsScore?.let { score ->
+        var statsExpanded by rememberSaveable(live.key) { mutableStateOf(true) }
+        val isStatsSection = com.island.dynamicisland.live.isSportsStatsSection(score.notes.firstOrNull(), score.players.isNotEmpty())
         // The persistent team layer owns the header; no duplicate app attribution.
         Column(Modifier.fillMaxWidth().padding(horizontal = sportsExpandedInset)
-            .padding(top = topPadding, bottom = sportsExpandedInset)) {
+            .padding(top = topPadding, bottom = if (isStatsSection && !statsExpanded) 4.dp else 12.dp)) {
             LiveActivityReveal(appear, 0, compactHeight, topPadding) {
                 Box(Modifier.fillMaxWidth().heightIn(min = 110.dp)
                     .padding(start = 82.dp, end = 82.dp,
-                        top = (cameraSafeTop - topPadding).coerceAtLeast(0.dp)),
+                        top = (cameraSafeTop - topPadding).coerceAtLeast(0.dp),
+                        bottom = if (score.scoreOne.isBlank() && score.scoreTwo.isBlank()) 16.dp else 0.dp),
                     contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(score.gameStatus.takeIf { it.isNotBlank() } ?: live.text,
-                            color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 21.sp)
+                        val field = com.island.dynamicisland.live.footballFieldPosition(score)
+                        val sourceClock = score.gameClockId?.takeIf { live.customContent != null }
+                        val contextStatus = score.gameStatus.lines()
+                            .filterNot { (field != null && it.trim() == field.sourceText) ||
+                                (sourceClock != null && it.trim() == score.gameClockText) }.joinToString("\n")
+                        if (sourceClock != null) SportsGameClockView(live.customContent!!, sourceClock, score.gameClockText.orEmpty(),
+                            active = interactive && stopwatchActive)
+                        if (contextStatus.isNotBlank() || sourceClock == null) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                (contextStatus.takeIf { it.isNotBlank() } ?: live.text).lines().forEach { line ->
+                                    NumericTickerText(line, color = Color.White, fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold, fontFamily = IslandFontFamily,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 21.sp,
+                                        enabled = interactive && stopwatchActive)
+                                }
+                            }
+                        }
+                        androidx.compose.runtime.key(live.key, score.teamOne, score.teamTwo) {
+                            SportsGameContextView(score, active = interactive && stopwatchActive)
+                        }
                         if (live.packageName.equals("com.espn.score_center", ignoreCase = true)) {
                             Text("ESPN", color = Color(0xFF8E8E93), fontSize = 10.sp, lineHeight = 12.sp,
                                 fontWeight = FontWeight.SemiBold, letterSpacing = .6.sp,
@@ -237,66 +300,114 @@ private fun ExpandedLiveUpdateContent(live: LiveUpdate, appear: () -> Float, int
                     }
                 }
             }
-            val sectionTitle = score.notes.firstOrNull()?.let { com.island.dynamicisland.live.sportsSectionTitle(it) }.orEmpty()
-            if (score.notes.isNotEmpty() || score.players.isNotEmpty()) {
+            if (!isStatsSection && (score.notes.isNotEmpty() || score.players.isNotEmpty())) {
                 LiveActivityReveal(appear, 1, compactHeight, topPadding) {
-                    Box(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 2.dp),
-                        contentAlignment = Alignment.Center) {
+                    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = .12f)))
-                        if (sectionTitle.isNotBlank()) {
-                            ContentUpdateText(sectionTitle, replacementKey = 0,
-                                modifier = Modifier.background(Color.Black).padding(horizontal = 8.dp),
-                                style = TextStyle(color = Color(0xFFDADAE0), fontSize = 11.sp, lineHeight = 14.sp,
-                                    fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        score.notes.forEachIndexed { index, detail ->
+                            Text(detail.trim().removeSurrounding("(", ")"),
+                                modifier = Modifier.fillMaxWidth().padding(top = if (index == 0) 10.dp else 4.dp),
+                                color = if (index == 0) Color.White else Color(0xFFDADAE0),
+                                fontSize = if (index == 0) 13.sp else 11.sp,
+                                fontWeight = if (index == 0) FontWeight.SemiBold else FontWeight.Normal,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         }
-                    }
-                }
-            }
-            score.notes.drop(1).forEachIndexed { index, note ->
-                LiveActivityReveal(appear, index + 2, compactHeight, topPadding) {
-                    ContentUpdateText(note, replacementKey = 0, style = TextStyle(color = Color(0xFFDADAE0), fontSize = 11.sp, lineHeight = 14.sp),
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp), maxLines = 3,
-                        contentAlignment = Alignment.CenterStart)
-                }
-            }
-            val sidedPlayers = score.players.isNotEmpty() && score.players.all { it.teamSide in 1..2 }
-            if (sidedPlayers) {
-                LiveActivityReveal(appear, score.notes.size + 1, compactHeight, topPadding) {
-                    Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                        for (side in 1..2) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                score.players.filter { it.teamSide == side }.forEach { player ->
-                                    SportsPlayerSummary(player, trailing = side == 2)
+                        score.players.forEach { detail ->
+                            Row(Modifier.fillMaxWidth().padding(top = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (detail.portrait != null) SportsPlayerPortrait(detail, 24.dp)
+                                Column(Modifier.weight(1f)) {
+                                    Text(detail.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(detail.stats, color = Color(0xFFDADAE0), fontSize = 11.sp, lineHeight = 15.sp)
                                 }
                             }
                         }
                     }
                 }
-            } else {
-                score.players.forEachIndexed { index, player ->
-                    LiveActivityReveal(appear, score.notes.size + index + 1, compactHeight, topPadding) {
-                        Row(Modifier.fillMaxWidth().padding(top = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            SportsPlayerPortrait(player, 24.dp)
-                            ContentUpdateText(player.name, replacementKey = 0, modifier = Modifier.weight(1f),
-                                style = TextStyle(color = Color.White, fontSize = 11.sp, lineHeight = 14.sp,
-                                    fontWeight = FontWeight.SemiBold), contentAlignment = Alignment.CenterStart,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            BoxWithConstraints(Modifier.weight(1.8f)) {
-                                val style = TextStyle(fontSize = 10.sp, lineHeight = 13.sp)
-                                val width = rememberTextMeasurer().measure(player.stats, style,
-                                    maxLines = 1, softWrap = false).size.width
-                                val available = with(LocalDensity.current) { maxWidth.toPx() } - 1f
-                                val fit = if (width > 0) (available / width).coerceIn(.01f, 1f) else 1f
-                                ContentUpdateText(player.stats, replacementKey = 0, style = style.copy(fontSize = 10.sp * fit,
-                                    color = Color(0xFFDADAE0), textAlign = androidx.compose.ui.text.style.TextAlign.End),
-                                    modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd, fillWidth = true, maxLines = 1)
+            }
+            if (isStatsSection) {
+            val animateStats = !com.island.dynamicisland.power.LocalPowerSaveMode.current &&
+                com.island.dynamicisland.power.LocalInteractionMotionAllowed.current
+            val statsArrow by animateFloatAsState(if (statsExpanded) 180f else 0f,
+                animationSpec = if (animateStats) tween(180) else androidx.compose.animation.core.snap(),
+                label = "sportsStatsArrow")
+            val sectionTitle = score.notes.firstOrNull()?.let { com.island.dynamicisland.live.sportsSectionTitle(it) }.orEmpty()
+            if (score.notes.isNotEmpty() || score.players.isNotEmpty()) {
+                LiveActivityReveal(appear, 1, compactHeight, topPadding) {
+                    Box(Modifier.fillMaxWidth().padding(top = if (statsExpanded) 12.dp else 6.dp, bottom = 0.dp),
+                        contentAlignment = Alignment.Center) {
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = .12f)))
+                        Row(Modifier.background(Color.Black)
+                            .semantics { stateDescription = if (statsExpanded) "Expanded" else "Collapsed" }
+                            .clickable(enabled = interactive, role = androidx.compose.ui.semantics.Role.Button,
+                                onClickLabel = if (statsExpanded) "Collapse stats" else "Expand stats") {
+                                statsExpanded = !statsExpanded
                             }
+                            .heightIn(min = 28.dp).padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            ContentUpdateText(sectionTitle.ifBlank { "Stats" }, replacementKey = 0,
+                                style = TextStyle(color = Color(0xFFDADAE0), fontSize = 11.sp, lineHeight = 14.sp,
+                                    fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            androidx.compose.material3.Icon(Icons.Default.ExpandMore, contentDescription = null,
+                                tint = Color(0xFFDADAE0), modifier = Modifier.padding(start = 4.dp)
+                                    .size(16.dp).graphicsLayer { rotationZ = statsArrow })
                         }
                     }
                 }
+            }
+            AnimatedVisibility(statsExpanded,
+                enter = if (animateStats) expandVertically() + fadeIn() else androidx.compose.animation.EnterTransition.None,
+                exit = if (animateStats) shrinkVertically() + fadeOut() else androidx.compose.animation.ExitTransition.None) {
+                Column {
+                    score.notes.drop(1).forEachIndexed { index, note ->
+                        LiveActivityReveal(appear, index + 2, compactHeight, topPadding) {
+                            ContentUpdateText(note, replacementKey = 0, style = TextStyle(color = Color(0xFFDADAE0), fontSize = 11.sp, lineHeight = 14.sp),
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp), maxLines = 3,
+                                contentAlignment = Alignment.CenterStart)
+                        }
+                    }
+                    val sidedPlayers = score.players.isNotEmpty() && score.players.all { it.teamSide in 1..2 }
+                    if (sidedPlayers) {
+                        LiveActivityReveal(appear, score.notes.size + 1, compactHeight, topPadding) {
+                            Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                                for (side in 1..2) {
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        score.players.filter { it.teamSide == side }.forEach { player ->
+                                            SportsPlayerSummary(player, trailing = side == 2)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        score.players.forEachIndexed { index, player ->
+                            LiveActivityReveal(appear, score.notes.size + index + 1, compactHeight, topPadding) {
+                                Row(Modifier.fillMaxWidth().padding(top = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    SportsPlayerPortrait(player, 24.dp)
+                                    ContentUpdateText(player.name, replacementKey = 0, modifier = Modifier.weight(1f),
+                                        style = TextStyle(color = Color.White, fontSize = 11.sp, lineHeight = 14.sp,
+                                            fontWeight = FontWeight.SemiBold), contentAlignment = Alignment.CenterStart,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    BoxWithConstraints(Modifier.weight(1.8f)) {
+                                        val style = TextStyle(fontSize = 10.sp, lineHeight = 13.sp)
+                                        val width = rememberTextMeasurer().measure(player.stats, style,
+                                            maxLines = 1, softWrap = false).size.width
+                                        val available = with(LocalDensity.current) { maxWidth.toPx() } - 1f
+                                        val fit = if (width > 0) (available / width).coerceIn(.01f, 1f) else 1f
+                                        ContentUpdateText(player.stats, replacementKey = 0, style = style.copy(fontSize = 10.sp * fit,
+                                            color = Color(0xFFDADAE0), textAlign = androidx.compose.ui.text.style.TextAlign.End),
+                                            modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd, fillWidth = true, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
 
+                    }
+                }
+            }
             }
         }
 
@@ -315,13 +426,13 @@ private fun ExpandedLiveUpdateContent(live: LiveUpdate, appear: () -> Float, int
     val cameraInset = com.island.dynamicisland.live.activityCameraInset(cameraSafeTop.value, topPadding.value).dp
     Column(Modifier.fillMaxWidth().padding(horizontal = edgeInset).padding(top = topPadding, bottom = edgeInset)) {
         LiveActivityReveal(appear, 0, compactHeight, topPadding) {
-            Row(Modifier.heightIn(min = headerHeight).fillMaxWidth()
+            Row(Modifier.heightIn(min = if (live.transfer != null) cameraInset + 22.dp else headerHeight).fillMaxWidth()
                 .then(if (interactive) Modifier.clickable(
                     role = androidx.compose.ui.semantics.Role.Button,
                     onClickLabel = "Open ${live.appName}", onClick = onOpenSource) else Modifier),
                 verticalAlignment = Alignment.Top) {
                 Spacer(Modifier.width(if (live.isNavigation) 60.dp else 44.dp))
-                Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                Column(Modifier.weight(1f).padding(end = if (live.transfer != null) 40.dp else 8.dp)) {
                     // Attribution and elapsed time sit beside the camera. Only the
                     // full-width headline needs to clear its lower edge.
                     Row(Modifier.fillMaxWidth().heightIn(min = 17.dp),
@@ -366,31 +477,72 @@ private fun ExpandedLiveUpdateContent(live: LiveUpdate, appear: () -> Float, int
         if (!secondaryClock && !isSports) live.stopwatch?.let { clock ->
             LiveActivityClock(clock, appear, compactHeight, topPadding, stopwatchActive, interactive, onOpenSource)
         }
-        if (live.text.isNotBlank() && !live.text.equals(headline, ignoreCase = true) && !isSports) LiveActivityReveal(appear, 1, compactHeight, topPadding) {
-            ContentUpdateText(live.text, replacementKey = replacementKeys["text"] ?: 0,
-                style = TextStyle(color = Color(0xFFDADAE0), fontSize = 16.sp, lineHeight = 22.sp),
-                contentAlignment = Alignment.CenterStart, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier
-                    .then(if (interactive) Modifier.clickable(onClick = onOpenSource) else Modifier)
-                    .padding(horizontal = 8.dp).padding(top = 12.dp))
+        if (live.transfer != null) {
+            LiveActivityReveal(appear, 1, compactHeight, topPadding) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (live.text.isNotBlank() && !live.text.equals(headline, ignoreCase = true)) {
+                            ContentUpdateText(live.text, replacementKey = replacementKeys["text"] ?: 0,
+                                style = TextStyle(color = Color(0xFFDADAE0), fontSize = 16.sp, lineHeight = 22.sp),
+                                contentAlignment = Alignment.CenterStart, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.then(if (interactive) Modifier.clickable(onClick = onOpenSource) else Modifier))
+                        }
+                        if (live.details.isNotBlank() && !live.details.equals(live.text, ignoreCase = true) &&
+                            !live.details.equals(headline, ignoreCase = true)) {
+                            ContentUpdateText(live.details, replacementKey = 0,
+                                style = TextStyle(color = Color(0xFFA5A5AD), fontSize = 14.sp, lineHeight = 20.sp),
+                                contentAlignment = Alignment.CenterStart, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    live.progress?.let { progress ->
+                        // Let each percentage roll finish while the bars follow every source update.
+                        val percentage = rememberTransferPercentage(progress, stopwatchActive)
+                        NumericTickerText("${percentage.value}%",
+                            enabled = stopwatchActive,
+                            color = liveAccent, fontSize = 32.sp, lineHeight = 38.sp,
+                            fontWeight = FontWeight.SemiBold, fontFamily = IslandFontFamily, compact = false)
+                    }
+                }
+            }
+        } else {
+            if (live.text.isNotBlank() && !live.text.equals(headline, ignoreCase = true) && !isSports) LiveActivityReveal(appear, 1, compactHeight, topPadding) {
+                ContentUpdateText(live.text, replacementKey = replacementKeys["text"] ?: 0,
+                    style = TextStyle(color = Color(0xFFDADAE0), fontSize = 16.sp, lineHeight = 22.sp),
+                    contentAlignment = Alignment.CenterStart, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier
+                        .then(if (interactive) Modifier.clickable(onClick = onOpenSource) else Modifier)
+                        .padding(horizontal = 8.dp).padding(top = 12.dp))
+            }
+            if (live.details.isNotBlank() && !live.details.equals(live.text, ignoreCase = true) && !live.details.equals(live.title, ignoreCase = true) && !isSports) LiveActivityReveal(appear, 2, compactHeight, topPadding) {
+                ContentUpdateText(live.details, replacementKey = 0,
+                    style = TextStyle(color = Color(0xFFA5A5AD), fontSize = 14.sp, lineHeight = 20.sp),
+                    contentAlignment = Alignment.CenterStart, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier
+                        .then(if (interactive) Modifier.clickable(onClick = onOpenSource) else Modifier)
+                        .padding(horizontal = 8.dp).padding(top = if (live.text.isNotBlank()) 6.dp else 12.dp))
+            }
         }
-        if (live.details.isNotBlank() && !live.details.equals(live.text, ignoreCase = true) && !live.details.equals(live.title, ignoreCase = true) && !isSports) LiveActivityReveal(appear, 2, compactHeight, topPadding) {
-            ContentUpdateText(live.details, replacementKey = 0,
-                style = TextStyle(color = Color(0xFFA5A5AD), fontSize = 14.sp, lineHeight = 20.sp),
-                contentAlignment = Alignment.CenterStart, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier
-                    .then(if (interactive) Modifier.clickable(onClick = onOpenSource) else Modifier)
-                    .padding(horizontal = 8.dp).padding(top = if (live.text.isNotBlank()) 6.dp else 12.dp))
+        live.transfer?.let { transfer ->
+            if (!com.island.dynamicisland.live.transferStatusIsRedundant(
+                    transfer.label, headline, live.text, live.details)) {
+                LiveActivityReveal(appear, 2, compactHeight, topPadding) {
+                    Text(transfer.label, color = Color(0xFFA5A5AD), fontSize = 12.sp, lineHeight = 16.sp,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 4.dp))
+                }
+            }
         }
         if (!live.isNavigation && !isSports && (live.indeterminate || live.progress != null)) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(if (live.transfer != null) 6.dp else 12.dp))
             LiveActivityReveal(appear, 2, compactHeight, topPadding) {
-                if (live.indeterminate) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(4.dp), color = liveAccent)
+                if (live.indeterminate && live.transfer?.paused != true) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(4.dp), color = liveAccent)
                 else live.progress?.let { progress ->
                     if (live.progressStyle != null) LiveProgressTrack(live.progressStyle, progress, liveAccent, active = stopwatchActive)
                     else {
                         val displayedProgress = rememberLiveProgress(progress, active = stopwatchActive)
                         LinearProgressIndicator(progress = { displayedProgress.value },
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(4.dp),
-                            color = liveAccent, trackColor = liveAccent.copy(alpha = .18f))
+                            color = liveAccent, trackColor = liveAccent.copy(alpha = .18f),
+                            gapSize = 0.dp, drawStopIndicator = {})
                     }
                 }
             }
@@ -574,16 +726,41 @@ private fun TeamLogo(bitmap: android.graphics.Bitmap?, name: String?, size: Dp) 
     }
 }
 
+/** Logo badges sit at the inner corner; score-only markers center beneath the number. */
+private fun Modifier.sportsPossession(score: SportsScore, side: Int, logo: Boolean = false, opacity: Float = 1f): Modifier {
+    val possession = score.possession?.takeIf { it.team == side } ?: return this
+    val team = if (side == 1) score.teamOne else score.teamTwo
+    val indicatorOpacity = opacity * if (score.possessionStale) .55f else 1f
+    return this
+        .semantics { contentDescription = "${team.orEmpty()}: " +
+            (if (score.possessionStale) "Last known " else "") + possession.label }
+        .drawWithContent {
+            drawContent()
+            if (opacity > 0f && size.width > 0f && size.height > 0f) {
+                val radius = if (logo) minOf(5.dp.toPx(), size.minDimension * .17f) else 1.6.dp.toPx()
+                val x = if (logo) {
+                    if (side == 1) size.width - radius * .65f else radius * .65f
+                } else size.width / 2f
+                val y = if (logo) size.height - radius * .65f else size.height - 1.5.dp.toPx()
+                val center = androidx.compose.ui.geometry.Offset(x, y)
+                if (logo) drawCircle(Color.Black.copy(alpha = indicatorOpacity), radius + 1.2.dp.toPx(), center)
+                drawCircle(Color.White.copy(alpha = indicatorOpacity), radius, center)
+            }
+        }
+}
+
 /** The same two team groups stay mounted from camera pill to expanded corners. */
 @Composable
 internal fun CompactSportsLiveActivity(score: SportsScore, height: Dp, grouped: Boolean = false,
                                       expansion: Float = 0f, celebration: SportsScoreChange? = null,
-                                      grouping: Float = if (grouped) 1f else 0f) {
+                                      grouping: Float = if (grouped) 1f else 0f, scoresOnly: Boolean = false,
+                                      cameraSplit: Boolean = true) {
     val p = expansion.coerceIn(0f, 1f)
-    val logoSize = androidx.compose.ui.unit.lerp(height * .62f, 44.dp, p)
-    val edge = androidx.compose.ui.unit.lerp(height * .20f, 40.dp, p)
+    val hideCompactLogos = scoresOnly && score.scoreOne.isNotBlank() && score.scoreTwo.isNotBlank()
+    val logoSize = androidx.compose.ui.unit.lerp(if (hideCompactLogos) 0.dp else height * .62f, 44.dp, p)
+    val edge = androidx.compose.ui.unit.lerp(height * (if (hideCompactLogos) .32f else .20f), 40.dp, p)
     val teamHeight = androidx.compose.ui.unit.lerp(height, 104.dp, p)
-    val compactTeamsWidth = sportsScoreLeadingWidth(score, height) + sportsScoreTrailingWidth(score, height)
+    val compactTeamsWidth = sportsScoreLeadingWidth(score, height, hideCompactLogos) + sportsScoreTrailingWidth(score, height, hideCompactLogos)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val group = grouping.coerceIn(0f, 1f)
         val cameraSideSpace = (sportsCameraSideSpace(maxWidth.value, edge.value,
@@ -597,11 +774,16 @@ internal fun CompactSportsLiveActivity(score: SportsScore, height: Dp, grouped: 
                 val logo = if (leading) score.teamOneLogo else score.teamTwoLogo
                 val value = if (leading) score.scoreOne else score.scoreTwo
                 androidx.compose.ui.layout.Layout(content = {
-                    TeamLogo(logo, name, logoSize)
-                    Text(value, color = Color(com.island.dynamicisland.live.readableTeamColor(
+                    Box(Modifier.size(logoSize).graphicsLayer { alpha = if (hideCompactLogos) p else 1f }
+                        .sportsPossession(score, if (leading) 1 else 2, logo = true)) {
+                        TeamLogo(logo, name, logoSize)
+                    }
+                    NumericTickerText(value, modifier = if (hideCompactLogos) Modifier.sportsPossession(score,
+                        if (leading) 1 else 2, opacity = 1f - p) else Modifier,
+                        color = Color(com.island.dynamicisland.live.readableTeamColor(
                         if (leading) score.teamOneColor else score.teamTwoColor)), fontSize = (13f + 17f * p).sp,
                         fontWeight = FontWeight.Bold, fontFamily = IslandFontFamily,
-                        maxLines = 1, softWrap = false)
+                        compact = p < .99f)
                     Text(name.orEmpty(), color = Color(com.island.dynamicisland.live.readableTeamColor(
                         if (leading) score.teamOneColor else score.teamTwoColor)), fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold, maxLines = 1,
@@ -630,16 +812,18 @@ internal fun CompactSportsLiveActivity(score: SportsScore, height: Dp, grouped: 
                     val points = items[1].measure(loose)
                     val label = items[2].measure(loose)
                     val badge = items[3].measure(loose)
-                    val gap = 6.dp.toPx()
+                    val gap = if (value.isBlank()) 0f else 6.dp.toPx() * (if (hideCompactLogos) p else 1f)
+                    val pointsHeight = if (value.isBlank()) 0 else points.height
                     val horizontalWidth = image.width + gap + points.width
                     val verticalWidth = maxOf(image.width, points.width, label.width).toFloat()
                     val w = (horizontalWidth + (verticalWidth - horizontalWidth) * p).toInt()
-                    val h = (maxOf(image.height, points.height) +
-                        (image.height + points.height + label.height + 4.dp.toPx() - maxOf(image.height, points.height)) * p).toInt()
+                    val h = (maxOf(image.height, pointsHeight) +
+                        (image.height + pointsHeight + label.height + 4.dp.toPx() - maxOf(image.height, pointsHeight)) * p).toInt()
                     fun mix(start: Float, end: Float) = (start + (end - start) * p).toInt()
                     // Compact content stays vertically centered; expanded logos
                     // stay anchored to their expanded top inset.
-                    val stackTop = (((teamHeight.toPx() - h) / 2f) * (1f - p)).toInt()
+                    val stackTop = (((teamHeight.toPx() - h) / 2f) *
+                        (if (value.isBlank()) 1f else 1f - p)).toInt()
                     layout(w, teamHeight.roundToPx()) {
                         image.place(mix(if (leading) 0f else points.width + gap, (w - image.width) / 2f),
                             stackTop + mix((h - image.height) / 2f, 0f))
@@ -660,15 +844,24 @@ internal fun CompactSportsLiveActivity(score: SportsScore, height: Dp, grouped: 
             val first = items[0].measure(loose)
             val second = items[1].measure(loose)
             val separator = items[2].measure(loose)
-            val firstX = edge.toPx() + cameraSideSpace.toPx()
-            val secondX = constraints.maxWidth - edge.toPx() - second.width
+            val compactEdge = if (hideCompactLogos && !cameraSplit) {
+                val centeredEdge = (constraints.maxWidth - first.width - second.width - 6.dp.toPx()) / 2f
+                edge.toPx() + (centeredEdge - edge.toPx()) * (1f - p)
+            } else edge.toPx()
+            val firstX = compactEdge + cameraSideSpace.toPx()
+            val secondX = constraints.maxWidth - compactEdge - second.width
             layout(constraints.maxWidth, teamHeight.roundToPx()) {
-                first.place(firstX.toInt(), 0)
-                second.place(secondX.toInt(), 0)
+                fun placeTeam(team: androidx.compose.ui.layout.Placeable, x: Float) {
+                    team.place(x.toInt(), ((teamHeight.toPx() - team.height) / 2f).toInt())
+                }
+                placeTeam(first, firstX)
+                placeTeam(second, secondX)
                 val separatorX = (firstX + first.width + secondX - separator.width) / 2f
                 val separatorY = (height.toPx() - separator.height) / 2f
                 separator.placeWithLayer(separatorX.toInt(), separatorY.toInt()) {
-                    alpha = group * (1f - p * 3f).coerceIn(0f, 1f)
+                    alpha = if (score.scoreOne.isBlank() && score.scoreTwo.isBlank()) 0f
+                        else (if (hideCompactLogos && !cameraSplit) 1f else group) *
+                            (1f - p * 3f).coerceIn(0f, 1f)
                 }
             }
         }
@@ -677,9 +870,9 @@ internal fun CompactSportsLiveActivity(score: SportsScore, height: Dp, grouped: 
 
 @Composable
 internal fun CompactLiveActivity(live: LiveUpdate, height: Dp, grouped: Boolean = false,
-                                 grouping: Float = if (grouped) 1f else 0f) {
+                                 grouping: Float = if (grouped) 1f else 0f, scoresOnly: Boolean = false) {
     if (live.sportsScore != null) {
-        CompactSportsLiveActivity(live.sportsScore, height, grouped, grouping = grouping)
+        CompactSportsLiveActivity(live.sportsScore, height, grouped, grouping = grouping, scoresOnly = scoresOnly)
         return
     }
     Row(Modifier.fillMaxSize().padding(horizontal = height * .2f), verticalAlignment = Alignment.CenterVertically) {
@@ -693,9 +886,24 @@ internal fun CompactLiveActivity(live: LiveUpdate, height: Dp, grouped: Boolean 
 /** One continuously placed layer carries the secondary's contents into the camera pill and back. */
 @Composable
 internal fun SecondaryActivityContent(np: NowPlaying?, live: LiveUpdate?, music: Boolean,
-                                      height: Dp, transfer: () -> Float) {
+                                      height: Dp, transfer: () -> Float, scoresOnly: Boolean = false) {
     val liveIndicatorWidth = compactIndicatorWidth(live, height)
     live?.sportsScore?.takeIf { !music }?.let { score ->
+        if (scoresOnly && score.scoreOne.isNotBlank() && score.scoreTwo.isNotBlank()) {
+            Row(Modifier.fillMaxSize().padding(horizontal = height * .32f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                NumericTickerText(score.scoreOne, modifier = Modifier.sportsPossession(score, 1), color = Color(com.island.dynamicisland.live.readableTeamColor(score.teamOneColor)),
+                    fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = IslandFontFamily, compact = true)
+                Box(Modifier.width(6.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(width = 4.dp, height = 1.5.dp)
+                        .background(Color.White.copy(alpha = .45f), RoundedCornerShape(1.dp)))
+                }
+                NumericTickerText(score.scoreTwo, modifier = Modifier.sportsPossession(score, 2), color = Color(com.island.dynamicisland.live.readableTeamColor(score.teamTwoColor)),
+                    fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = IslandFontFamily, compact = true)
+            }
+            return
+        }
         Box(Modifier.fillMaxSize()) {
             IslandArtwork(null, live, height * .6f, 0.dp,
                 Modifier.align(Alignment.Center).graphicsLayer { alpha = 1f - transfer().coerceIn(0f, 1f) })

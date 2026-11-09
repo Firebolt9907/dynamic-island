@@ -8,6 +8,47 @@ class SportsStatusMemoryTest {
     private val memory = SportsStatusMemory { now }
     private fun game(context: String? = null) = SportsScore("TENN", "24", "SC", "17", "9:28 - 4th", secondaryStatus = context)
 
+    @Test fun fieldSurvivesScoresPeriodsAndLongOmissionsAsDimmedHistoricalContext() {
+        val original = game("1st & 10\nSC 25").copy(possession = SportsPossession(1, "Possession"))
+        assertFalse(memory.remember("game", original).fieldContextStale)
+        now = 600_000
+        val historical = memory.remember("game", game().copy(scoreTwo = "23", status = "Halftime"))
+        assertTrue(historical.fieldContextStale)
+        assertEquals(75f, footballFieldPosition(historical)!!.yards, .001f)
+        assertNull(historical.secondaryStatus)
+        val refreshed = memory.remember("game", game("2nd & 5\nTENN 30").copy(possession = SportsPossession(2, "Possession")))
+        assertFalse(refreshed.fieldContextStale)
+        assertEquals(30f, footballFieldPosition(refreshed)!!.yards, .001f)
+    }
+
+    @Test fun missingPossessionRetainsDimmedOwnerUntilConfirmedOrInvalidated() {
+        val fresh = game("1st & 10\nSC 25").copy(possession = SportsPossession(1, "Possession"))
+        memory.remember("game", fresh)
+        val omitted = memory.remember("game", game().copy(status = "9:15 - 4th"))
+        assertEquals(1, omitted.possession?.team)
+        assertTrue(omitted.possessionStale)
+        assertTrue(omitted.fieldContextStale)
+        val confirmed = memory.remember("game", fresh.copy(possession = SportsPossession(2, "Possession")))
+        assertEquals(2, confirmed.possession?.team)
+        assertFalse(confirmed.possessionStale)
+        assertNull(memory.remember("game", game().copy(scoreOne = "27")).possession)
+        memory.remember("game", fresh)
+        assertNull(memory.remember("game", game().copy(status = "Halftime")).possession)
+        memory.remember("game", fresh)
+        memory.forget("game")
+        assertNull(memory.remember("game", game()).possession)
+    }
+
+    @Test fun retainedFieldDoesNotLeakAcrossGamesRemovalOrFinal() {
+        for (next in listOf(game().copy(teamOne = "OTHER"), game().copy(status = "Final"))) {
+            memory.remember("game", game("1st & 10\nSC 25"))
+            assertNull(memory.remember("game", next).retainedFootballField)
+        }
+        memory.remember("game", game("1st & 10\nSC 25"))
+        memory.forget("game")
+        assertNull(memory.remember("game", game()).retainedFootballField)
+    }
+
     @Test fun rotatingStatsPanelsRetainLatestDownAndFieldPositionAcrossClockTicks() {
         memory.remember("game", game("4th & 16\n50"))
         now = 30_000

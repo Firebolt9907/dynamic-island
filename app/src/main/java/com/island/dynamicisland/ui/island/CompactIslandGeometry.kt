@@ -25,3 +25,7 @@ internal object CompactIslandGeometry {
 internal fun sportsCameraSideSpace(width: Float, edge: Float, teamsWidth: Float, expansion: Float): Float =
     (width - 2f * edge - teamsWidth - 6f).coerceAtLeast(0f) * (1f - expansion.coerceIn(0f, 1f))
 
+/** Preserve standard score typography and the same outer inset as other compact pills. */
+internal fun compactSportsScoresWidth(height: Float, firstWidth: Float, secondWidth: Float): Float =
+    maxOf(height, height * .64f + firstWidth + 6f + secondWidth)
+

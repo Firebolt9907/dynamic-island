@@ -5,6 +5,33 @@
     android:orientation="vertical"
     android:padding="12dp">
 
+    <Chronometer
+        android:id="@+id/game_clock"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tv_status_secondary"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/team_one_possession"
+        android:layout_width="6dp"
+        android:layout_height="6dp"
+        android:src="@android:drawable/presence_online"
+        android:contentDescription="Possession"
+        android:visibility="gone" />
+    <ImageView
+        android:id="@+id/team_two_possession"
+        android:layout_width="6dp"
+        android:layout_height="6dp"
+        android:src="@android:drawable/presence_online"
+        android:contentDescription="Possession"
+        android:visibility="gone" />
+
     <RelativeLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content">

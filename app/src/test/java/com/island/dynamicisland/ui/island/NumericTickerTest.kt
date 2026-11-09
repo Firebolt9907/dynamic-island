@@ -23,6 +23,20 @@ class NumericTickerTest {
         assertEquals(listOf(TickingDigit(0, '1', '2')), tickingDigits("19", "29"))
     }
 
+    @Test fun largerJumpsAnimateChangedDigitsInEitherDirection() {
+        for ((before, after) in listOf("12" to "17", "12" to "42",
+            "01:58" to "02:13", "99" to "125")) {
+            assertTrue(tickingDigits(before, after).isNotEmpty())
+            tickingDigits(before, after).forEach {
+                assertNotEquals(it.before, it.after)
+                assertEquals(1f, numericTickDirection(before, after, it.index), 0f)
+            }
+            tickingDigits(after, before).forEach {
+                assertEquals(-1f, numericTickDirection(after, before, it.index), 0f)
+            }
+        }
+    }
+
     @Test fun directionFollowsTheWholeNumberAcrossCarriesAndBorrows() {
         for ((before, after) in listOf("19" to "20", "99" to "100",
             "01:59" to "02:00", "59:59" to "1:00:00", "9.9%" to "10.0%")) {

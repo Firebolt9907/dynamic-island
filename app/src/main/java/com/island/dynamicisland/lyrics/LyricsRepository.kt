@@ -38,17 +38,21 @@ internal object LyricsRepository {
     suspend fun lookup(context: Context, track: LyricsTrack): SyncedLyrics? = withContext(Dispatchers.IO) {
         mutex.withLock {
             val now = System.currentTimeMillis()
-            cache[track.key]?.takeIf { it.second != null && now - it.first < 7 * DAY }?.let { return@withLock it.second }
+            cache[track.key]?.takeIf { it.second != null && now - it.first in 0 until LyricsDiskCache.RETENTION_MS }?.let { return@withLock it.second }
             val dir = File(context.cacheDir, "synced-lyrics").apply { mkdirs() }
-            val file = File(dir, track.key + ".json")
-            val disk = runCatching {
-                if (!file.exists()) null else {
-                    val json = JSONObject(file.readText())
-                    Document(json.getString("format"), json.getString("raw")).parse(track.durationMs)
+            val diskCache = LyricsDiskCache(File(context.noBackupFilesDir, "synced-lyrics"))
+            // Carry forward lyrics fetched by older versions of the app.
+            val entry = diskCache.read(track.key) ?: runCatching {
+                val legacy = File(dir, track.key + ".json")
+                if (!legacy.isFile) null else {
+                    val json = JSONObject(legacy.readText())
+                    LyricsDiskCache.Entry(json.getString("format"), json.getString("raw"), legacy.lastModified())
+                        .also { diskCache.write(track.key, it); legacy.delete() }
                 }
             }.getOrNull()
-            if (disk != null && now - file.lastModified() < if (disk.wordSynced) 7 * DAY else DAY) {
-                cache[track.key] = now to disk
+            val disk = entry?.let { runCatching { Document(it.format, it.raw).parse(track.durationMs) }.getOrNull() }
+            if (disk != null && entry.isFresh(now)) {
+                cache[track.key] = entry.fetchedAt to disk
                 return@withLock disk
             }
             val document = coroutineScope {
@@ -60,11 +64,9 @@ internal object LyricsRepository {
             }
             ensureActive()
             val result = document?.parse(track.durationMs) ?: disk ?: cache[track.key]?.second
-            if (result != null) cache[track.key] = now to result
+            if (result != null) cache[track.key] = (if (document != null) now else entry?.fetchedAt ?: 0L) to result
             if (document != null && result != null) runCatching {
-                file.writeText(JSONObject().put("format", document.format).put("raw", document.raw).toString())
-                dir.listFiles()?.filter { it.extension == "json" }?.sortedByDescending { it.lastModified() }
-                    ?.drop(64)?.forEach { it.delete() }
+                diskCache.write(track.key, LyricsDiskCache.Entry(document.format, document.raw, now))
             }
             result
         }

@@ -40,11 +40,13 @@ data class LiveUpdate(
     val isHotspot: Boolean = false,
     val isCall: Boolean = false,
     val callAvatar: Bitmap? = null,
+    val transfer: TransferActivity? = null,
 )
 
 object LiveUpdateRepository {
     private val active = LinkedHashMap<String, LiveUpdate>()
     private val sportsStatusMemory = SportsStatusMemory()
+    private val footballPlayHistory = FootballPlayHistory()
     private val listState = MutableStateFlow<List<LiveUpdate>>(emptyList())
     private val state = MutableStateFlow<LiveUpdate?>(null)
     val activities: StateFlow<List<LiveUpdate>> = listState.asStateFlow()
@@ -61,11 +63,12 @@ object LiveUpdateRepository {
     fun put(key: String, update: LiveUpdate?) {
         if (update != null) {
             active[key] = update.sportsScore?.let {
-                update.copy(sportsScore = sportsStatusMemory.remember(key, it))
-            } ?: update.also { sportsStatusMemory.forget(key) }
+                update.copy(sportsScore = footballPlayHistory.remember(key, sportsStatusMemory.remember(key, it)))
+            } ?: update.also { sportsStatusMemory.forget(key); footballPlayHistory.forget(key) }
         } else {
             active.remove(key)
             sportsStatusMemory.forget(key)
+            footballPlayHistory.forget(key)
         }
         val all = active.values.sortedBy { priority(it) }
         listState.value = all
@@ -74,6 +77,7 @@ object LiveUpdateRepository {
     fun get(key: String): LiveUpdate? = active[key]
     fun clear() {
         sportsStatusMemory.clear()
+        footballPlayHistory.clear()
         if (active.isEmpty()) return
         active.clear()
         listState.value = emptyList()
@@ -107,14 +111,27 @@ private fun isOngoingCallNotification(sbn: StatusBarNotification): Boolean {
     )
 }
 
+private fun notificationTransfer(sbn: StatusBarNotification): TransferActivity? {
+    val extras = sbn.notification.extras
+    val max = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+    return detectTransferActivity(
+        listOf(Notification.EXTRA_TITLE, Notification.EXTRA_TEXT, Notification.EXTRA_BIG_TEXT,
+            Notification.EXTRA_SUB_TEXT).map { extras.getCharSequence(it)?.toString().orEmpty() } +
+            extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES).orEmpty().map { it.toString() },
+        ongoing = sbn.isOngoing,
+        progress = if (max > 0) (extras.getInt(Notification.EXTRA_PROGRESS).toFloat() / max).coerceIn(0f, 1f) else null,
+        indeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE),
+    )
+}
+
 /** Check if this notification is an ongoing foreground task (timer, ride, order) or a final game score. */
-fun isLiveUpdate(sbn: StatusBarNotification, sportsFinal: Boolean = false): Boolean {
+fun isLiveUpdate(sbn: StatusBarNotification, sportsFinal: Boolean = false, metricStopwatch: Boolean = false): Boolean {
     val n = sbn.notification
     val isMedia = n.extras.containsKey(Notification.EXTRA_MEDIA_SESSION) ||
         n.extras.getString(Notification.EXTRA_TEMPLATE) == "android.app.Notification\$MediaStyle"
     val isSummary = (n.flags and Notification.FLAG_GROUP_SUMMARY) != 0
     val isAutoCancel = (n.flags and Notification.FLAG_AUTO_CANCEL) != 0
-    val isStopwatch = n.category == Notification.CATEGORY_STOPWATCH
+    val isStopwatch = n.category == Notification.CATEGORY_STOPWATCH || metricStopwatch
     val callType = n.extras.getInt("android.callType", 0)
     // CallStyle state and ringing controls veto generic promotion/progress hints.
     if (isOngoingCallNotification(sbn)) return true
@@ -126,6 +143,8 @@ fun isLiveUpdate(sbn: StatusBarNotification, sportsFinal: Boolean = false): Bool
     val callActions = n.actions.orEmpty().map { callControl(it.title?.toString().orEmpty()).kind }
     if (CallControlKind.ANSWER in callActions && CallControlKind.DECLINE in callActions) return false
 
+    val transfer = notificationTransfer(sbn)
+    if (transfer != null && !isSummary && !isMedia && !isAutoCancel) return true
     if (!isLiveActivityNotification(
             ongoing = sbn.isOngoing,
             groupSummary = isSummary,
@@ -183,16 +202,18 @@ fun readLiveUpdate(context: Context, sbn: StatusBarNotification): LiveUpdate? {
     val isSportsFinal = (isEspn || wasActiveSports) && sportsScore != null &&
         (isFinal || (wasActiveSports && !sbn.isOngoing))
 
-    if (!isLiveUpdate(sbn, sportsFinal = isSportsFinal)) return null
+    // Clock's MetricStyle stopwatch may omit CATEGORY_STOPWATCH, including when
+    // paused with AUTO_CANCEL. Read its typed clock before applying eligibility.
+    val isCall = isOngoingCallNotification(sbn)
+    val clock = if (isCall) null else readNotificationClock(context, n)
+    if (!isLiveUpdate(sbn, sportsFinal = isSportsFinal, metricStopwatch = clock?.stopwatch != null)) return null
 
     val extras = n.extras
     val pm = context.packageManager
     val app = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(sbn.packageName, 0)).toString() }
         .getOrDefault(sbn.packageName)
     fun text(key: String): String = extras.getCharSequence(key)?.toString()?.trim().orEmpty()
-    val isCall = isOngoingCallNotification(sbn)
     val isHotspot = isHotspotNotification(sbn.packageName, listOf(text(Notification.EXTRA_TITLE)))
-    val clock = if (isCall) null else readNotificationClock(context, n)
     val callClock = if (isCall && extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER) &&
         !extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN) && n.`when` > 0L &&
         n.`when` <= System.currentTimeMillis()) {
@@ -215,14 +236,16 @@ fun readLiveUpdate(context: Context, sbn: StatusBarNotification): LiveUpdate? {
     val max = if (Build.VERSION.SDK_INT >= 36 && style != null) style.progressMax else extras.getInt(Notification.EXTRA_PROGRESS_MAX)
     val value = if (Build.VERSION.SDK_INT >= 36 && style != null) style.progress else extras.getInt(Notification.EXTRA_PROGRESS)
     val indeterminate = if (Build.VERSION.SDK_INT >= 36 && style != null) style.isProgressIndeterminate else extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE)
+    val transfer = if (!isCall) notificationTransfer(sbn) else null
     val shortText = if (Build.VERSION.SDK_INT >= 36) n.shortCriticalText.orEmpty() else ""
     val status = if (isHotspot) hotspotCompactStatus(listOf(body, content.detail)) else if (isCall) "In call" else shortText.ifBlank { sportsScore?.formattedScore.orEmpty() }
     val primaryIcon = sportsScore?.teamOneLogo ?: runCatching { n.smallIcon?.loadDrawable(context)?.toBitmap(96, 96) }.getOrNull()
-    return LiveUpdate(sbn.key, app, title, body, content.detail,
-        status,
+    fun displayText(value: String) = if (transfer != null) stripTransferPercentage(value) else value
+    return LiveUpdate(sbn.key, app, displayText(title).ifBlank { transfer?.label ?: app }, displayText(body), displayText(content.detail),
+        displayText(status),
         primaryIcon,
-        if (max > 0) (value.toFloat() / max).coerceIn(0f, 1f) else null,
-        indeterminate, n.contentIntent,
+        if (indeterminate) null else if (max > 0) (value.toFloat() / max).coerceIn(0f, 1f) else transfer?.progress,
+        indeterminate || (transfer != null && transfer.progress == null && !transfer.paused), n.contentIntent,
         n.actions.orEmpty().filter { !it.isContextual && it.remoteInputs.isNullOrEmpty() }
             .mapNotNull { action ->
                 // Controls need a usable accessible label. Preserve the end-call
@@ -241,6 +264,7 @@ fun readLiveUpdate(context: Context, sbn: StatusBarNotification): LiveUpdate? {
         accentColor = if (isHotspot) 0xFF30B0FF.toInt() else if (isCall) 0xFF34C759.toInt() else liveActivityAccent(context, sbn.packageName, n.color),
         countdown = clock?.countdown,
         progressStyle = if (Build.VERSION.SDK_INT >= 36 && style != null) readLiveProgressStyle(context, style) else null,
+        transfer = transfer,
         isHotspot = isHotspot,
         isCall = isCall,
         callAvatar = if (isCall) runCatching {

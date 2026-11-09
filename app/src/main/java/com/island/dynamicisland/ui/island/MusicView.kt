@@ -50,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -90,6 +92,7 @@ fun AlbumArt(np: NowPlaying?, size: androidx.compose.ui.unit.Dp, corner: android
         !com.island.dynamicisland.power.LocalInteractionMotionAllowed.current
     val playbackScale by rememberArtworkPlaybackScale(np?.isPlaying != false, animate = !reduceMotion)
     val flip = remember { androidx.compose.animation.core.Animatable(1f) }
+    val motionFrame = remember { MotionArtworkFrame() }
     var shownTrack by remember { androidx.compose.runtime.mutableStateOf(np) }
     var outgoingArt by remember { androidx.compose.runtime.mutableStateOf(np?.staticAlbumArt) }
     val identity = np?.trackIdentity
@@ -103,7 +106,9 @@ fun AlbumArt(np: NowPlaying?, size: androidx.compose.ui.unit.Dp, corner: android
         if (identity != shownTrack?.trackIdentity) {
             val hadTrack = shownTrack != null
             // Rapid skips restart with the face that was actually visible, not a stale track.
-            outgoingArt = if (ArtworkFlipMotion.showsNewArtwork(flip.value)) shownTrack?.staticAlbumArt else outgoingArt
+            outgoingArt = if (ArtworkFlipMotion.showsNewArtwork(flip.value)) {
+                motionFrame.snapshot() ?: shownTrack?.staticAlbumArt
+            } else outgoingArt
             shownTrack = np
             if (hadTrack && np != null) {
                 flip.snapTo(0f)
@@ -147,7 +152,7 @@ fun AlbumArt(np: NowPlaying?, size: androidx.compose.ui.unit.Dp, corner: android
         val motionTrack = shownTrack.takeIf { ArtworkFlipMotion.showsNewArtwork(flip.value) }
         if (expandedArtwork && !reduceMotion && motionTrack?.appleMotionUrl != null) {
             androidx.compose.runtime.key(motionTrack.appleMotionUrl) {
-                AppleMotionArtwork(motionTrack.appleMotionUrl, motionTrack.isPlaying, Modifier.fillMaxSize(), artworkExpansion)
+                AppleMotionArtwork(motionTrack.appleMotionUrl, motionTrack.isPlaying, Modifier.fillMaxSize(), artworkExpansion, motionFrame)
             }
         }
         }
@@ -247,7 +252,7 @@ internal fun rememberMusicTextHeight(np: NowPlaying?): androidx.compose.ui.unit.
  * outward from the compact pill as the card grows; shared artwork and visualizer movement is owned by the enclosing island.
  */
 @Composable
-fun ExpandedMusic(np: NowPlaying?, appear: () -> Float = { 1f }, interactive: Boolean = true, topPadding: androidx.compose.ui.unit.Dp = 12.dp, sharedElements: Boolean = false, headerHeight: androidx.compose.ui.unit.Dp = 72.dp, artworkCorner: androidx.compose.ui.unit.Dp = 26.dp, onOpenSource: () -> Unit = {}, compactHeight: androidx.compose.ui.unit.Dp = 36.dp) {
+fun ExpandedMusic(np: NowPlaying?, appear: () -> Float = { 1f }, interactive: Boolean = true, topPadding: androidx.compose.ui.unit.Dp = 12.dp, sharedElements: Boolean = false, headerHeight: androidx.compose.ui.unit.Dp = 72.dp, artworkCorner: androidx.compose.ui.unit.Dp = 26.dp, onOpenSource: () -> Unit = {}, compactHeight: androidx.compose.ui.unit.Dp = 36.dp, deferResize: Boolean = false) {
     val textHeight = rememberMusicTextHeight(np)
     val headerCenter = topPadding.value + headerHeight.value / 2f
     val timelineCenter = topPadding.value + headerHeight.value + 15f
@@ -259,14 +264,22 @@ fun ExpandedMusic(np: NowPlaying?, appear: () -> Float = { 1f }, interactive: Bo
     val commands = MediaRepository.commands
     val accent = np?.let { Color(it.staticArtworkAccentColor) }?.brightAccent() ?: Color(0xFF34C759)
 
+    val resize = remember { DeferredContentResize() }
     Column(
         Modifier
             .fillMaxWidth()
+            .onSizeChanged { resize.visibleHeight = it.height }
             // Report each intermediate height to the island's surface and touch bounds.
             // The header stays anchored while clipping gradually reveals loaded lyrics.
-            .animateContentSize(animationSpec = if (animateContentGrowth)
+            .animateContentSize(animationSpec = if (animateContentGrowth && !deferResize)
                 tween(360, easing = androidx.compose.animation.core.FastOutSlowInEasing)
                 else androidx.compose.animation.core.snap())
+            .layout { measurable, constraints ->
+                val content = measurable.measure(constraints)
+                val height = resize.height(content.height, deferResize)
+                    .coerceIn(constraints.minHeight, constraints.maxHeight)
+                layout(content.width, height) { content.placeRelative(0, 0) }
+            }
             .padding(start = 12.dp, end = 12.dp, top = topPadding, bottom = 12.dp),
         verticalArrangement = Arrangement.Top,
     ) {
@@ -323,7 +336,7 @@ fun ExpandedMusic(np: NowPlaying?, appear: () -> Float = { 1f }, interactive: Bo
         Row(Modifier.expandedContentEntrance(appear, 2, timelineCenter, compactHeight.value).fillMaxWidth().padding(horizontal = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
             val elapsed = (duration * displayedProgress).toLong()
-            NumericTickerText(playbackTime(elapsed), enabled = appear() > 0f && scrubFraction == null, color = Color(0xFF8E8E93), fontSize = 10.sp, lineHeight = 14.sp)
+            NumericTickerText(playbackTime(elapsed), enabled = appear() > 0f, color = Color(0xFF8E8E93), fontSize = 10.sp, lineHeight = 14.sp)
             Canvas(Modifier.weight(1f).height(24.dp)
                 .then(if (canSeek) Modifier.pointerInput(np?.trackIdentity, duration, canSeek) {
                     awaitEachGesture {
@@ -367,7 +380,7 @@ fun ExpandedMusic(np: NowPlaying?, appear: () -> Float = { 1f }, interactive: Bo
                     size = Size(size.width * displayedProgress, barHeight), cornerRadius = CornerRadius(barHeight / 2))
             }
             NumericTickerText(if (duration > 0) "−${playbackTime(duration - elapsed)}" else "−0:00",
-                enabled = appear() > 0f && scrubFraction == null,
+                enabled = appear() > 0f,
                 color = Color(0xFF8E8E93), fontSize = 10.sp, lineHeight = 14.sp)
         }
 
@@ -530,8 +543,8 @@ private fun ControlButton(icon: ImageVector, size: androidx.compose.ui.unit.Dp, 
             outgoingIcon = displayedIcon
             displayedIcon = icon
             toggleProgress.snapTo(0f)
-            toggleProgress.animateTo(1f, androidx.compose.animation.core.spring(
-                dampingRatio = .52f, stiffness = 650f))
+            toggleProgress.animateTo(1f, tween(420,
+                easing = androidx.compose.animation.core.LinearEasing))
         }
     }
     val interaction = remember { MutableInteractionSource() }
@@ -546,7 +559,10 @@ private fun ControlButton(icon: ImageVector, size: androidx.compose.ui.unit.Dp, 
     )
     Canvas(
         modifier = Modifier.size(width = size, height = 40.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .graphicsLayer {
+                scaleX = if (isToggle) 1f else scale
+                scaleY = if (isToggle) 1f else scale
+            }
             // Hidden/disabled controls must not take the compact pill's press gesture.
             .then(if (enabled) Modifier.clickable(interactionSource = interaction, indication = null,
                 onClickLabel = description, onClick = {
@@ -586,14 +602,13 @@ private fun ControlButton(icon: ImageVector, size: androidx.compose.ui.unit.Dp, 
                     for (x in listOf(16f, 27f)) drawRoundRect(Color.White,
                         topLeft = Offset(x * unit, 12 * unit), size = Size(6 * unit, 24 * unit),
                         cornerRadius = CornerRadius(1.5f * unit), alpha = opacity)
-                } else triangle(15f, 37f, 9f, 39f, alpha = opacity)
+                } else triangle(18.1f, 33.9f, 12.6f, 35.4f, alpha = opacity)
             }
         }
         if (isToggle) {
-            val p = toggleProgress.value
-            val blend = p.coerceIn(0f, 1f)
-            if (blend < 1f) toggleGlyph(outgoingIcon, 1f - .45f * blend, 1f - blend)
-            toggleGlyph(icon, .55f + .45f * p, blend)
+            val frame = PlaybackControlMotion.toggle(toggleProgress.value)
+            toggleGlyph(outgoingIcon, frame.scale, 1f - frame.blend)
+            toggleGlyph(displayedIcon, frame.scale, frame.blend)
         } else {
             val previous = icon == Icons.Rounded.SkipPrevious
             PlaybackControlMotion.triangles(skipProgress.value, previous).forEach { frame ->

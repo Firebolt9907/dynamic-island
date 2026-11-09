@@ -6,6 +6,23 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CustomSportsScoreTest {
+    @Test fun recognizesPregameStartTimeAlongsideLiveStatusFields() {
+        assertTrue(isSportsPrimaryStatusField("tv_pre_status_line_one"))
+        assertTrue(isSportsPrimaryStatusField("tv_status_primary"))
+        assertTrue(isSportsPrimaryStatusField("game_status"))
+        assertFalse(isSportsPrimaryStatusField("tv_pre_team_one_record"))
+        val score = SportsScore("ND", "", "NAVY", "", "12:00 PM", secondaryStatus = "ABC")
+        assertEquals("12:00 PM\nABC", score.gameStatus)
+        assertEquals("", score.formattedScore)
+    }
+    @Test fun pregameRetainsBothTeamsWithoutInventingScores() {
+        assertEquals("" to "", sportsScoreValues(null, null, true, true))
+        assertEquals("" to "", sportsScoreValues("", null, true, true))
+        assertEquals(null, sportsScoreValues(null, null, true, false))
+        assertEquals(null, sportsScoreValues("7", null, true, true))
+        assertEquals("0" to "0", sportsScoreValues("0", "0", true, true))
+        assertEquals("21" to "17", sportsScoreValues("21", "17", false, false))
+    }
     @Test fun preservesDownDistanceAndFieldPositionBelowClockAndPeriod() {
         val score = SportsScore("TENN", "21", "SC", "17", "14:51 - 4th",
             secondaryStatus = "1st & 10\nSC 44")

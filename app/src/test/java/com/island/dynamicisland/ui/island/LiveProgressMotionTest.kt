@@ -10,6 +10,19 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LiveProgressMotionTest {
+    @Test fun onePercentUpdatePassesThroughIntermediateValues() = runTest {
+        val frames = MotionTestFrames()
+        val scope = CoroutineScope(backgroundScope.coroutineContext + frames.clock)
+        val motion = LiveProgressMotion(.42f)
+        scope.launch { motion.update(.43f, animate = true) }
+        frames.step(this, 1)
+        repeat(6) { frames.step(this, 16) }
+        assertTrue(motion.progress.value > .42f && motion.progress.value < .429f)
+        repeat(150) { frames.step(this, 16) }
+        assertEquals(.43f, motion.progress.value, .0001f)
+        assertFalse(motion.progress.isRunning)
+    }
+
     @Test fun rapidProgressCorrectionRetainsTheVisiblePositionAndSettles() = runTest {
         val frames = MotionTestFrames()
         val scope = CoroutineScope(backgroundScope.coroutineContext + frames.clock)

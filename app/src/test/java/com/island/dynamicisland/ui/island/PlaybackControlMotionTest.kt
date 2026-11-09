@@ -4,6 +4,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackControlMotionTest {
+    @Test fun toggleBounceCanOvershootWithoutBringingBackTheOldIcon() {
+        val frame = PlaybackControlMotion.toggle(.72f)
+        assertTrue(frame.scale > 1f)
+        assertEquals(1f, frame.blend, 0f)
+    }
+
+    @Test fun toggleCrossfadesOnlyBelowFortyPercentAndShrinksToTwentyPercent() {
+        assertEquals(ToggleFrame(1f, 0f), PlaybackControlMotion.toggle(0f))
+        assertEquals(ToggleFrame(1f, 1f), PlaybackControlMotion.toggle(1f))
+        assertEquals(.2f, PlaybackControlMotion.toggle(.38f).scale, .0001f)
+        assertEquals(.5f, PlaybackControlMotion.toggle(.38f).blend, .0001f)
+        for (step in 0..1000) {
+            val frame = PlaybackControlMotion.toggle(step / 1000f)
+            assertTrue(frame.scale >= .1999f && frame.scale <= 1.1201f)
+            if (frame.blend > 0f && frame.blend < 1f) assertTrue(frame.scale < .4f)
+        }
+    }
+
+    @Test fun toggleHasContinuousVelocityAtShrinkAndBounceTurns() {
+        val h = .0001f
+        for (turn in listOf(.38f, .72f, .86f)) {
+            val before = PlaybackControlMotion.toggle(turn - h).scale
+            val at = PlaybackControlMotion.toggle(turn).scale
+            val after = PlaybackControlMotion.toggle(turn + h).scale
+            assertEquals(0f, (at - before) / h, .03f)
+            assertEquals(0f, (after - at) / h, .03f)
+        }
+    }
+
     @Test fun skipStartsAndEndsWithTheSameTwoVisibleSlots() {
         for (previous in listOf(false, true)) {
             fun visible(p: Float) = PlaybackControlMotion.triangles(p, previous)

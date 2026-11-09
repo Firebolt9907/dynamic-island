@@ -135,6 +135,11 @@ class LiveUpdateDemoReceiver : BroadcastReceiver() {
                         val sourceControls = mutableListOf<String>()
                         fun source(view: android.view.View, visible: Boolean = true) {
                             val shown = visible && view.visibility == android.view.View.VISIBLE
+                            if (intent.getBooleanExtra("inspectFields", false) && view is android.widget.TextView) {
+                                val resources = context.packageManager.getResourcesForApplication(activity.packageName)
+                                val name = runCatching { resources.getResourceEntryName(view.id) }.getOrDefault("unknown")
+                                sourceControls += "$name:visible=$shown:text=${view.text}"
+                            }
                             if (view.hasOnClickListeners()) sourceControls += "${view.javaClass.simpleName}:${view.contentDescription}:visible=$shown:id=${view.id}"
                             if (view is android.view.ViewGroup) for (i in 0 until view.childCount) source(view.getChildAt(i), shown)
                         }
@@ -146,7 +151,7 @@ class LiveUpdateDemoReceiver : BroadcastReceiver() {
         }
         if (intent.getBooleanExtra("inspectActivities", false)) {
             resultData = com.island.dynamicisland.live.LiveUpdateRepository.activities.value
-                .joinToString { "${it.packageName}: ${it.title} status='${it.status}', call=${it.isCall}, controls=${it.actions.map { a -> "${a.title}:${a.callControl?.kind}:${a.callControl?.active}:end=${a.isHangUp}" }}, sports=${it.sportsScore != null}, gameStatus=${it.sportsScore?.gameStatus}, teams=${it.sportsScore?.summaryTitle}, score=${it.sportsScore?.formattedScore}, notes=${it.sportsScore?.notes}, players=${it.sportsScore?.players?.map { p -> "${p.name}: ${p.stats} portrait=${p.portrait != null}" }}, t1Logo=${it.sportsScore?.teamOneLogo?.let { b -> "${b.width}x${b.height}" }}, t2Logo=${it.sportsScore?.teamTwoLogo?.let { b -> "${b.width}x${b.height}" }}" }.ifBlank { "No live activities" }
+                .joinToString { "${it.packageName}: ${it.title} status='${it.status}', call=${it.isCall}, controls=${it.actions.map { a -> "${a.title}:${a.callControl?.kind}:${a.callControl?.active}:end=${a.isHangUp}" }}, sports=${it.sportsScore != null}, possession=${it.sportsScore?.possession}, gameStatus=${it.sportsScore?.gameStatus}, teams=${it.sportsScore?.summaryTitle}, score=${it.sportsScore?.formattedScore}, notes=${it.sportsScore?.notes}, players=${it.sportsScore?.players?.map { p -> "${p.name}: ${p.stats} portrait=${p.portrait != null}" }}, t1Logo=${it.sportsScore?.teamOneLogo?.let { b -> "${b.width}x${b.height}" }}, t2Logo=${it.sportsScore?.teamTwoLogo?.let { b -> "${b.width}x${b.height}" }}" }.ifBlank { "No live activities" }
             return
         }
         if (intent.getBooleanExtra("inspectStopwatch", false)) {
@@ -258,6 +263,21 @@ class LiveUpdateDemoReceiver : BroadcastReceiver() {
             val t2Logo = createBadge(team2, 0xFF73000A.toInt())
 
             val views = RemoteViews(context.packageName, R.layout.live_update_espn_demo).apply {
+                val possession = intent.getIntExtra("possession", 0)
+                val nativeClock = intent.getBooleanExtra("nativeClock", false)
+                setViewVisibility(R.id.game_clock, if (nativeClock) android.view.View.VISIBLE else android.view.View.GONE)
+                if (nativeClock) {
+                    val countdown = intent.getBooleanExtra("clockCountdown", true)
+                    val seconds = intent.getIntExtra("clockSeconds", 318).coerceAtLeast(0)
+                    val base = android.os.SystemClock.elapsedRealtime() + seconds * 1000L * if (countdown) 1 else -1
+                    setChronometerCountDown(R.id.game_clock, countdown)
+                    setChronometer(R.id.game_clock, base, null, intent.getBooleanExtra("clockRunning", true))
+                }
+                val gameContext = intent.getStringExtra("context").orEmpty()
+                setTextViewText(R.id.tv_status_secondary, gameContext)
+                setViewVisibility(R.id.tv_status_secondary, if (gameContext.isBlank()) android.view.View.GONE else android.view.View.VISIBLE)
+                setViewVisibility(R.id.team_one_possession, if (possession == 1) android.view.View.VISIBLE else android.view.View.GONE)
+                setViewVisibility(R.id.team_two_possession, if (possession == 2) android.view.View.VISIBLE else android.view.View.GONE)
                 setTextViewText(R.id.tv_live_team_one_name, team1)
                 setTextViewText(R.id.tv_live_team_one_score, score1.toString())
                 setImageViewBitmap(R.id.iv_team_one_logo, t1Logo)
@@ -298,6 +318,20 @@ class LiveUpdateDemoReceiver : BroadcastReceiver() {
         val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val cancel = PendingIntent.getBroadcast(context, id, Intent(context, LiveUpdateDemoReceiver::class.java)
             .putExtra("clear", true).putExtra("id", id), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        if (intent.getStringExtra("type") == "transfer") {
+            val builder = Notification.Builder(context, "live_demo")
+                .setSmallIcon(android.R.drawable.stat_sys_upload)
+                .setContentTitle(intent.getStringExtra("title") ?: "Uploading vacation photos")
+                .setContentText(intent.getStringExtra("text") ?: "3 of 12 files · 24 MB / 80 MB")
+                .setOngoing(intent.getBooleanExtra("ongoing", true))
+                .setAutoCancel(intent.getBooleanExtra("autoCancel", false))
+                .setOnlyAlertOnce(true).setContentIntent(open)
+                .addAction(Notification.Action.Builder(null, "Cancel", cancel).build())
+            if (!intent.getBooleanExtra("textOnly", false)) builder.setProgress(100,
+                intent.getIntExtra("progress", 30), intent.getBooleanExtra("indeterminate", false))
+            manager.notify(id, builder.build())
+            return
+        }
         val progress = intent.getIntExtra("progress", 65)
         val builder = Notification.Builder(context, "live_demo")
             .setColor(intent.getIntExtra("color", Notification.COLOR_DEFAULT))

@@ -4,6 +4,30 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CompactIslandGeometryTest {
+    @Test fun scoresKeepNaturalWidthAndEqualOuterPadding() {
+        for (first in listOf(8f, 16f, 24f)) for (second in listOf(8f, 16f, 24f)) {
+            val width = compactSportsScoresWidth(36f, first, second)
+            val edge = (width - first - second - 6f) / 2f
+            assertTrue(edge >= 11.519f)
+            assertEquals(edge, width - (edge + first + 6f + second), .001f)
+        }
+    }
+
+    @Test fun threeActivityPlacementsUseIndividualScoreBubbleWidths() {
+        val widths = mapOf("first" to 52f, "second" to 68f)
+        val placements = activityPlacements(IslandActivities("primary", listOf("first", "second")),
+            60f, 36f, secondaryWidths = widths)
+        for ((key, width) in widths) assertEquals(width, placements.getValue(key).width, .001f)
+        assertTrue(placements.getValue("first").center + 26f < -30f)
+        assertTrue(placements.getValue("second").center - 34f > 30f)
+    }
+
+    @Test fun scoreOnlyPrimaryReservesLessSpaceAndStillClearsCamera() {
+        val withLogos = CompactIslandGeometry.width(36f, 11f, 0f, 44f, leadingWidth = 44f)
+        val scoresOnly = CompactIslandGeometry.width(36f, 11f, 0f, 16f, leadingWidth = 16f)
+        assertTrue(scoresOnly < withLogos)
+        assertTrue(7.2f + 16f <= scoresOnly / 2f - 11f + .001f)
+    }
     @Test fun primarySportsTeamsClearThePaddedCameraWithOneTwoOrThreeActivities() {
         val height = 40f
         val leading = 48f

@@ -21,6 +21,8 @@ data class IslandTuning(
     /** Corner radius of the expanded music card. */
     val expandedCornerDp: Float = 38f,
     val useDeviceCorners: Boolean = true,
+    /** Activities arriving or leaving collapse every bubble into the camera and re-emerge. */
+    val reflowThroughCamera: Boolean = true,
 ) {
     companion object {
         val Default = IslandTuning()
@@ -84,6 +86,7 @@ object IslandConfig {
             collapsedHeightDp = p.getFloat("h", IslandTuning.Default.collapsedHeightDp),
             expandedCornerDp = p.getFloat("corner", IslandTuning.Default.expandedCornerDp),
             useDeviceCorners = p.getBoolean("deviceCorners", !p.contains("corner")),
+            reflowThroughCamera = p.getBoolean("reflowThroughCamera", IslandTuning.Default.reflowThroughCamera),
         )
     }
 
@@ -96,6 +99,7 @@ object IslandConfig {
             ?.putFloat("h", t.collapsedHeightDp)
             ?.putFloat("corner", t.expandedCornerDp)
             ?.putBoolean("deviceCorners", t.useDeviceCorners)
+            ?.putBoolean("reflowThroughCamera", t.reflowThroughCamera)
             ?.apply()
     }
 

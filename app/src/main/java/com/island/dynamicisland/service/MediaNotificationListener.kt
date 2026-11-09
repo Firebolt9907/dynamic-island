@@ -50,6 +50,11 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
     }
 
     private var activeController: MediaController? = null
+    private var pendingPlayback: NowPlaying? = null
+    private val playbackTimeout = Runnable {
+        pendingPlayback = null
+        activeController?.let { publish(it) }
+    }
     private val actionIcons = LinkedHashMap<Int, Bitmap?>()
     private var cachedArt: Bitmap? = null
     private var cachedAccent = Color.rgb(24, 24, 27)
@@ -63,6 +68,7 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        com.island.dynamicisland.media.AppleMusicArtwork.init(this)
         sessionManager = getSystemService(MediaSessionManager::class.java)
         val component = ComponentName(this, MediaNotificationListener::class.java)
         MediaRepository.commands = this
@@ -171,6 +177,8 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
     }
 
     private fun detachController() {
+        handler.removeCallbacks(playbackTimeout)
+        pendingPlayback = null
         cachedArt = null
         actionIcons.clear()
         cachedAccent = Color.rgb(24, 24, 27)
@@ -246,6 +254,7 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
             artist = artist,
             albumArt = art,
             album = meta.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty(),
+            albumArtist = meta.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST).orEmpty(),
             isPlaying = isPlaying,
             positionMs = positionMs,
             durationMs = durationMs,
@@ -258,16 +267,46 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
         )
 
         MusicControlsConfig.observe(this, nowPlaying)
-        MediaRepository.update(nowPlaying)
+        val pending = pendingPlayback
+        if (pending != null && pending.trackIdentity == nowPlaying.trackIdentity &&
+            pending.isPlaying != nowPlaying.isPlaying) {
+            // Metadata and stale playback callbacks must not undo immediate tap feedback.
+            MediaRepository.update(nowPlaying.copy(
+                isPlaying = pending.isPlaying,
+                positionMs = pending.positionAt(nowElapsed),
+                playbackSpeed = pending.playbackSpeed,
+                publishedAtElapsedMs = pending.publishedAtElapsedMs.takeIf { it == 0L } ?: nowElapsed,
+            ))
+        } else {
+            handler.removeCallbacks(playbackTimeout)
+            pendingPlayback = null
+            MediaRepository.update(nowPlaying)
+        }
     }
 
     override fun playPause() {
-        val transport = activeController?.transportControls ?: return
-        val isPlaying = activeController?.playbackState?.state == PlaybackState.STATE_PLAYING
-        if (isPlaying) {
-            transport.pause()
-        } else {
-            transport.play()
+        val controller = activeController ?: return
+        val snapshot = MediaRepository.nowPlaying.value
+            ?.takeIf { it.packageName == controller.packageName } ?: return
+        val now = SystemClock.elapsedRealtime()
+        val target = snapshot.copy(
+            isPlaying = !snapshot.isPlaying,
+            positionMs = snapshot.positionAt(now),
+            publishedAtElapsedMs = if (snapshot.publishedAtElapsedMs > 0L) now else 0L,
+            playbackSpeed = snapshot.playbackSpeed.takeIf { it.isFinite() && it != 0f } ?: 1f,
+        )
+        pendingPlayback = target
+        MediaRepository.update(target)
+        handler.removeCallbacks(playbackTimeout)
+        handler.postDelayed(playbackTimeout, 1500L)
+        try {
+            if (target.isPlaying) controller.transportControls.play()
+            else controller.transportControls.pause()
+        } catch (e: RuntimeException) {
+            handler.removeCallbacks(playbackTimeout)
+            pendingPlayback = null
+            publish(controller)
+            Log.w("IslandMedia", "Playback command failed", e)
         }
     }
 
