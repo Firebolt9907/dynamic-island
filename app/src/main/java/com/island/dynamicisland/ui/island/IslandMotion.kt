@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -40,6 +41,7 @@ internal class IslandMotion(private val scope: CoroutineScope) {
     private var expansionAllowed = false
     private var pressActive = false
     private var beganExpanded = false
+    private var beganPeek = false
 
     enum class TapResult { OPEN_APP, KEEP_EXPANDED, COLLAPSED, IGNORED }
 
@@ -48,6 +50,7 @@ internal class IslandMotion(private val scope: CoroutineScope) {
         if (!pressActive) return TapResult.IGNORED
         pressActive = false
         return when {
+            beganPeek -> { dismiss(); TapResult.OPEN_APP }
             beganExpanded -> { dismiss(); TapResult.COLLAPSED }
             expansionAllowed && progress.value >= IslandGrowth.hapticProgress -> {
                 commit()
@@ -68,6 +71,7 @@ internal class IslandMotion(private val scope: CoroutineScope) {
     fun press(hasMedia: Boolean, longPressTimeoutMs: Long, fromSecondary: Boolean = false, mergeCompanions: Boolean = false, mergePair: Boolean = false, onExpansionHaptic: () -> Unit) {
         automaticallyExpanded = false
         beganExpanded = expanded
+        beganPeek = expanded && musicPeek
         pressActive = true
         previewActive = hasMedia || expanded
         if (expanded) return
@@ -144,9 +148,21 @@ internal class IslandMotion(private val scope: CoroutineScope) {
         mergingCompanions = mergeCompanions || mergePair
         animation = scope.launch {
             pressScale.snapTo(1f)
-            // Complete the merge before revealing the shallow metadata row.
-            if (transferringActivities) transfer.animateTo(1f, ActivityBubbleMotion.merge)
-            progress.animateTo(1f, IslandGrowth.spec(350))
+            coroutineScope {
+                if (transferringActivities) {
+                    // Start growing once the merge is mostly done, so it reads as one motion
+                    // rather than a merge, a pause, then a separate expansion.
+                    val mergedEnough = CompletableDeferred<Unit>()
+                    launch {
+                        transfer.animateTo(1f, ActivityBubbleMotion.merge) {
+                            if (value >= PEEK_GROWTH_AFTER_MERGE) mergedEnough.complete(Unit)
+                        }
+                        mergedEnough.complete(Unit)
+                    }
+                    mergedEnough.await()
+                }
+                progress.animateTo(1f, peekSpring)
+            }
         }
     }
 
@@ -210,6 +226,28 @@ internal class IslandMotion(private val scope: CoroutineScope) {
         }
     }
 
+    /** Jump straight to the resting compact state, for use while the island is not visible. */
+    fun snapClosed() {
+        animation?.cancel()
+        scaleAnimation?.cancel()
+        automaticallyExpanded = false
+        dragProgress = null
+        pressActive = false
+        expansionAllowed = false
+        expanded = false
+        animation = scope.launch {
+            progress.snapTo(0f)
+            transfer.snapTo(0f)
+            pressScale.snapTo(1f)
+            returningFromCamera = false
+            secondary = false
+            mergingCompanions = false
+            mergingPair = false
+            previewActive = false
+            musicPeek = false
+        }
+    }
+
     /** Keep the outgoing selection mounted until its card and companions finish exiting. */
     suspend fun dismissForReplacement(): Boolean {
         dismiss()
@@ -260,6 +298,9 @@ internal class IslandMotion(private val scope: CoroutineScope) {
 }
 
 private const val MERGE_INTENT_MS = 80
+private const val PEEK_GROWTH_AFTER_MERGE = .6f
+/** An unrequested peek eases in more gently than a held press; still critically damped. */
+private val peekSpring = IslandGrowth.spec(620)
 private const val PRESS_PHASE_MS = 220
 private val reboundSpring = spring<Float>(dampingRatio = 0.48f, stiffness = 900f, visibilityThreshold = 0.0005f)
 private val anticipationSpring = spring<Float>(dampingRatio = 1f, stiffness = 1100f)

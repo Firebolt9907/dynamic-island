@@ -19,9 +19,15 @@ data class LiveActivitySource(
 
 internal fun liveActivitySourceKey(packageName: String, channelId: String) = "${packageName.length}:$packageName$channelId"
 
+// Disabled sources are user preferences and must survive catalog eviction.
+internal fun trimLiveActivityHistory(history: List<LiveActivitySource>): List<LiveActivitySource> {
+    var enabledCount = 0
+    return history.filter { !it.enabled || enabledCount++ < 128 }
+}
+
 internal fun rememberLiveActivitySource(history: List<LiveActivitySource>, source: LiveActivitySource): List<LiveActivitySource> {
     val previous = history.firstOrNull { it.key == source.key }
-    return listOf(source.copy(enabled = previous?.enabled ?: source.enabled)) + history.filterNot { it.key == source.key }
+    return trimLiveActivityHistory(listOf(source.copy(enabled = previous?.enabled ?: source.enabled)) + history.filterNot { it.key == source.key })
 }
 
 /** A local catalog of encountered ongoing sources, rather than a log of notification bodies. */
@@ -35,14 +41,14 @@ object LiveActivityConfig {
     fun init(context: Context) {
         if (prefs != null) return
         prefs = context.applicationContext.getSharedPreferences("live_activity_sources", Context.MODE_PRIVATE)
-        mutable.value = runCatching {
+        mutable.value = trimLiveActivityHistory(runCatching {
             val array = JSONArray(prefs!!.getString("history", "[]"))
             (0 until array.length()).map { index ->
                 val item = array.getJSONObject(index)
                 LiveActivitySource(item.getString("package"), item.getString("channel"),
                     item.getString("app"), item.getString("title"), item.getLong("seen"), item.optBoolean("enabled", true))
             }
-        }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList()))
     }
 
     fun observe(context: Context, packageName: String, channelId: String, appName: String, title: String) {
@@ -63,7 +69,7 @@ object LiveActivityConfig {
 
     fun setEnabled(key: String, enabled: Boolean) {
         if (mutable.value.none { it.key == key && it.enabled != enabled }) return
-        mutable.value = mutable.value.map { if (it.key == key) it.copy(enabled = enabled) else it }
+        mutable.value = trimLiveActivityHistory(mutable.value.map { if (it.key == key) it.copy(enabled = enabled) else it })
         save()
         revision.value++
     }

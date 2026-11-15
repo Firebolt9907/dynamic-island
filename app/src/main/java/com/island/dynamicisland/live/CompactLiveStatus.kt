@@ -51,3 +51,29 @@ internal fun navigationDirectionKey(title: String): String = title.lowercase(jav
     .replace(Regex("""\b\d+(?:[.,]\d+)*\s*(?:feet|foot|ft|miles?|mi|meters?|metres?|m|kilometers?|kilometres?|km)\b"""), "")
     .replace(Regex("""\s+"""), " ").trim()
     .takeUnless { value -> nonDirectionTerms.any { value.contains(it) } }.orEmpty()
+
+/** Status words that read better as a fixed-width glyph than as text in the compact island. */
+enum class CompactStatusGlyph { WORKING, ATTENTION, DONE, FAILED }
+
+private val workingStatuses = setOf(
+    "working", "thinking", "reasoning", "running", "generating", "building", "compiling", "processing",
+    "analyzing", "analysing", "planning", "writing", "coding", "searching", "loading", "syncing", "in progress",
+)
+private val attentionStatuses = setOf(
+    "needs input", "input needed", "needs approval", "approval needed", "awaiting approval", "awaiting input",
+    "waiting", "waiting for input", "action needed", "action required", "needs attention", "blocked",
+)
+private val doneStatuses = setOf("done", "complete", "completed", "finished", "succeeded")
+private val failedStatuses = setOf("failed", "error", "errored")
+
+/** Map a whole short status (not a substring of longer text) to a glyph, ignoring case and trailing ellipses. */
+internal fun compactStatusGlyph(status: String): CompactStatusGlyph? {
+    val key = status.trim().trimEnd('.', '…', '!').trim().replace(Regex("\\s+"), " ").lowercase(java.util.Locale.ROOT)
+    return when (key) {
+        in workingStatuses -> CompactStatusGlyph.WORKING
+        in attentionStatuses -> CompactStatusGlyph.ATTENTION
+        in doneStatuses -> CompactStatusGlyph.DONE
+        in failedStatuses -> CompactStatusGlyph.FAILED
+        else -> null
+    }
+}

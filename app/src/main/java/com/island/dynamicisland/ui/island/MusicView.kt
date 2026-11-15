@@ -48,6 +48,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.layout
@@ -159,39 +161,72 @@ fun AlbumArt(np: NowPlaying?, size: androidx.compose.ui.unit.Dp, corner: android
     }
 }
 
+/** Compact album-art side as a fraction of the pill height; the pill widens to fit it. */
+internal const val CompactArtworkFraction = 0.68f
+
+/** Compact album-art corner as a fraction of the art's side. */
+internal const val CompactArtworkCornerFraction = 0.27f
+
+/** Extra room left of the compact album art (fraction of pill height), beyond the shared edge gap. */
+internal const val CompactArtworkLeadingInset = 0.03f
+
+/** Room between the compact album art and the camera; zero keeps the art against the cutout. */
+internal const val CompactArtworkTrailingGap = 0f
+
+/** Extra room right of the compact visualizer. Art and visualizer halves match, so neither widens the pill. */
+internal const val CompactVisualizerTrailingInset = 0.03f
+
+/** Compact visualizer width as a fraction of pill height; always matches the album art. */
+internal const val CompactVisualizerWidthFraction = CompactArtworkFraction
+
+/** Compact visualizer height as a fraction of pill height; iOS peaks reach about half the pill. */
+internal const val CompactVisualizerHeightFraction = 0.55f
+
+/** Peak height per bar: a soft hump so the middle bars reach highest, like iOS. */
+private val equalizerEnvelope = floatArrayOf(.55f, .78f, .95f, 1f, .85f, .6f)
+
 /**
  * Live equalizer bars, iOS-style. Bars animate only while playing; when paused they settle to
  * a calm low level. Each bar has its own period so the motion reads as organic, not synced.
+ * A slight left-to-right gradient keeps the bars from reading as flat blocks.
  */
 @Composable
 fun Equalizer(
     color: Color,
     playing: Boolean,
     modifier: Modifier = Modifier,
-    bars: Int = 4,
+    bars: Int = 6,
 ) {
-    val count = bars.coerceIn(1, 5)
+    val count = bars.coerceIn(1, 6)
     val powerSaveMode = com.island.dynamicisland.power.LocalPowerSaveMode.current
     val levels = remember(count) { List(count) { androidx.compose.animation.core.Animatable(0.30f) } }
     androidx.compose.runtime.LaunchedEffect(playing, count, powerSaveMode) {
         animateEqualizer(levels, playing, animationsEnabled = !powerSaveMode)
     }
-    Canvas(modifier) {
-        val gap = size.width * 0.22f / (count - 1).coerceAtLeast(1)
+    val vivid = color.vivid()
+    val dark = androidx.compose.ui.graphics.lerp(vivid, Color.Black, .50f)
+    val light = androidx.compose.ui.graphics.lerp(vivid, Color.White, .35f)
+    androidx.compose.foundation.layout.Spacer(modifier.drawWithCache {
+        // Diagonal sweep: darker at the bottom-left, brighter toward the top-right.
+        val brush = androidx.compose.ui.graphics.Brush.linearGradient(listOf(dark, vivid, light),
+            start = Offset(0f, size.height), end = Offset(size.width, 0f))
+        val gap = size.width * 0.30f / (count - 1).coerceAtLeast(1)
         val barWidth = (size.width - gap * (count - 1)) / count
-        for (i in 0 until count) {
-            val level = levels[i].value
-            val h = size.height * level
-            val x = i * (barWidth + gap)
-            val y = (size.height - h) / 2f
-            drawRoundRect(
-                color = color,
-                topLeft = Offset(x, y),
-                size = Size(barWidth, h),
-                cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
-            )
+        onDrawBehind {
+            for (i in 0 until count) {
+                val envelope = if (count == equalizerEnvelope.size) equalizerEnvelope[i] else 1f
+                val h = (size.height * levels[i].value * envelope).coerceAtLeast(barWidth)
+                val x = i * (barWidth + gap)
+                val y = (size.height - h) / 2f
+                drawRoundRect(
+                    brush = brush,
+                    topLeft = Offset(x, y),
+                    size = Size(barWidth, h),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+                )
+            }
         }
-    }
+    })
 }
 
 /**
@@ -201,16 +236,16 @@ fun Equalizer(
 @Composable
 fun CollapsedMusic(np: NowPlaying?, heightDp: androidx.compose.ui.unit.Dp) {
     val pad = heightDp * 0.20f
-    val art = heightDp * 0.60f
-    val eqHeight = heightDp * 0.42f
-    val eqWidth = heightDp * 0.54f
+    val art = heightDp * CompactArtworkFraction
+    val eqHeight = heightDp * CompactVisualizerHeightFraction
+    val eqWidth = heightDp * CompactVisualizerWidthFraction
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = pad),
+            .padding(start = pad + heightDp * CompactArtworkLeadingInset, end = pad + heightDp * CompactVisualizerTrailingInset),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AlbumArt(np, size = art, corner = art * 0.32f)
+        AlbumArt(np, size = art, corner = art * CompactArtworkCornerFraction)
         // Center gap sits over the camera cutout.
         Spacer(Modifier.weight(1f))
         val accent = np?.let { Color(it.staticArtworkAccentColor) }?.brightAccent() ?: Color(0xFF34C759)
@@ -338,7 +373,7 @@ fun ExpandedMusic(np: NowPlaying?, appear: () -> Float = { 1f }, interactive: Bo
             val elapsed = (duration * displayedProgress).toLong()
             NumericTickerText(playbackTime(elapsed), enabled = appear() > 0f, color = Color(0xFF8E8E93), fontSize = 10.sp, lineHeight = 14.sp)
             Canvas(Modifier.weight(1f).height(24.dp)
-                .then(if (canSeek) Modifier.pointerInput(np?.trackIdentity, duration, canSeek) {
+                .then(if (canSeek) Modifier.pointerInput(np?.trackIdentity, duration, canSeek, commands) {
                     awaitEachGesture {
                         val down = awaitFirstDown()
                         down.consume()
@@ -635,6 +670,16 @@ internal fun Color.brightAccent(): Color {
         blue = (blue * boost).coerceAtMost(1f),
         alpha = 1f,
     )
+}
+
+/** Push pale artwork accents toward a saturated hue so the bars read like iOS's vivid waveform. */
+private fun Color.vivid(): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(toArgb(), hsv)
+    if (hsv[1] < .08f) return this // Keep grayscale artwork neutral instead of inventing a hue.
+    hsv[1] = (hsv[1] * 1.5f).coerceIn(.55f, 1f)
+    hsv[2] = hsv[2].coerceAtLeast(.92f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
 }
 
 private fun playbackTime(milliseconds: Long): String {

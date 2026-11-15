@@ -60,11 +60,11 @@ internal fun LockScreenIsland(locked: Boolean, keyguardShowing: Boolean) {
         val height = lensRadius * 2f + (h - lensRadius * 2f) * reveal
         // Same 1 dp, 18% white outer edge as the neutral compact islands.
         val edge = 1.dp.toPx()
-        drawRoundRect(Color.White.copy(alpha = .18f * reveal.coerceIn(0f, 1f)),
+        drawSquircle(Color.White.copy(alpha = .18f * reveal.coerceIn(0f, 1f)),
             Offset(center.x - w / 2f - edge, center.y - height / 2f - edge),
-            Size(w + edge * 2f, height + edge * 2f), CornerRadius(height / 2f + edge))
-        drawRoundRect(Color.Black, Offset(center.x - w / 2f, center.y - height / 2f),
-            Size(w, height), CornerRadius(height / 2f))
+            Size(w + edge * 2f, height + edge * 2f), height / 2f + edge)
+        drawSquircle(Color.Black, Offset(center.x - w / 2f, center.y - height / 2f),
+            Size(w, height), height / 2f)
         val iconCenter = Offset(center.x + lensRadius + 16.dp.toPx(), center.y)
         val color = androidx.compose.ui.graphics.lerp(Color.White, Color(0xFF92E6AC), open.coerceIn(0f, 1f))
             .copy(alpha = reveal.coerceIn(0f, 1f))

@@ -2,6 +2,10 @@ package com.island.dynamicisland.live
 
 /** Compare notification meaning, leaving scores and delivery-stage wording intact. */
 internal fun significantLiveUpdateKey(update: LiveUpdate): String {
+    // Agent summaries change constantly as threads start and finish; only threads asking for input matter.
+    update.agents?.let { agents ->
+        return (listOf(AgentSignaturePrefix) + agents.attentionThreads.sorted()).joinToString("\n")
+    }
     if (update.isNavigation) return navigationDirectionKey(update.title)
     update.sportsScore?.let { score ->
         // ESPN rotates leader panels and game context. Only actual scoreboard
@@ -31,6 +35,10 @@ internal fun significantLiveUpdateKey(update: LiveUpdate): String {
         .joinToString("\n", transform = ::normalize)
 }
 
+private const val AgentSignaturePrefix = "agents"
+private fun String.isAgentSignature() = this == AgentSignaturePrefix || startsWith("$AgentSignaturePrefix\n")
+private fun String.agentThreads() = split("\n").drop(1).toSet()
+
 /** Ignore re-posts and noisy fields; removal resets the baseline for the next activity. */
 internal class SignificantLiveUpdateTracker {
     private val known = mutableMapOf<String, String>()
@@ -43,7 +51,12 @@ internal class SignificantLiveUpdateTracker {
             // Temporary Maps service states must not replace the last actual direction.
             if (signature.isBlank()) continue
             // Clock posts its stopwatch when leaving the app; keep it compact until held.
-            if (update.stopwatch == null && known[update.key] != signature && update.key !in suppressedKeys) changed = update.key
+            val previous = known[update.key]
+            val significant = if (previous != null && previous.isAgentSignature() && signature.isAgentSignature())
+                // Expand when a thread starts waiting on the user, not when one stops waiting.
+                (signature.agentThreads() - previous.agentThreads()).isNotEmpty()
+            else previous != signature
+            if (update.stopwatch == null && significant && update.key !in suppressedKeys) changed = update.key
             known[update.key] = signature
         }
         return changed

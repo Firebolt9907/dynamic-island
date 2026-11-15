@@ -25,6 +25,7 @@ internal class MotionArtworkFrame {
 @Composable
 internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifier = Modifier, expansion: () -> Float = { 1f }, frame: MotionArtworkFrame? = null) {
     val context = LocalContext.current
+    val currentExpansion by rememberUpdatedState(expansion)
     var ready by remember(url) { mutableStateOf(false) }
     var failed by remember(url) { mutableStateOf(false) }
     var texture by remember(url) { mutableStateOf<TextureView?>(null) }
@@ -52,7 +53,7 @@ internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifie
         onDispose { player.removeListener(listener); player.release() }
     }
     DisposableEffect(frame, player) {
-        val capture = { if (ready && !failed && expansion() > 0f) texture?.bitmap else null }
+        val capture = { if (ready && !failed && currentExpansion() > 0f) texture?.bitmap else null }
         frame?.capture = capture
         onDispose {
             if (frame?.capture === capture) frame.capture = null
@@ -64,32 +65,36 @@ internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifie
         targetValue = if (ready && !failed) 1f else 0f,
         animationSpec = androidx.compose.animation.core.tween(420), label = "motionArtworkFade",
     )
-    AndroidView(
-        modifier = modifier.graphicsLayer { alpha = opacity.value * expansion().coerceIn(0f, 1f) },
-        factory = {
-            TextureView(it).apply {
-                texture = this
-                isOpaque = false
-                fun crop() {
-                    val video = player.videoSize
-                    if (width == 0 || height == 0 || video.width == 0 || video.height == 0) return
-                    val ratio = video.width * video.pixelWidthHeightRatio / video.height
-                    if (!ratio.isFinite() || ratio <= 0f) return
-                    val viewRatio = width.toFloat() / height
-                    val sx = if (ratio > viewRatio) ratio / viewRatio else 1f
-                    val sy = if (ratio < viewRatio) viewRatio / ratio else 1f
-                    // Portrait motion extends below the square cover composition. Keep its
-                    // top edge aligned with the static artwork rather than cropping both ends.
-                    setTransform(Matrix().apply { setScale(sx, sy, width / 2f, 0f) })
+    // AndroidView retains its factory-created view across recompositions. A new player
+    // needs a new TextureView, rather than the surface attached to the released player.
+    key(player) {
+        AndroidView(
+            modifier = modifier.graphicsLayer { alpha = opacity.value * expansion().coerceIn(0f, 1f) },
+            factory = {
+                TextureView(it).apply {
+                    texture = this
+                    isOpaque = false
+                    fun crop() {
+                        val video = player.videoSize
+                        if (width == 0 || height == 0 || video.width == 0 || video.height == 0) return
+                        val ratio = video.width * video.pixelWidthHeightRatio / video.height
+                        if (!ratio.isFinite() || ratio <= 0f) return
+                        val viewRatio = width.toFloat() / height
+                        val sx = if (ratio > viewRatio) ratio / viewRatio else 1f
+                        val sy = if (ratio < viewRatio) viewRatio / ratio else 1f
+                        // Portrait motion extends below the square cover composition. Keep its
+                        // top edge aligned with the static artwork rather than cropping both ends.
+                        setTransform(Matrix().apply { setScale(sx, sy, width / 2f, 0f) })
+                    }
+                    addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> crop() }
+                    player.addListener(object : Player.Listener {
+                        override fun onVideoSizeChanged(videoSize: VideoSize) { crop() }
+                    })
+                    player.setVideoTextureView(this)
                 }
-                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> crop() }
-                player.addListener(object : Player.Listener {
-                    override fun onVideoSizeChanged(videoSize: VideoSize) { crop() }
-                })
-                player.setVideoTextureView(this)
-            }
-        },
-    )
+            },
+        )
+    }
 }
 
 /** One process-wide cache: HLS playlists and segments survive player recreation. */

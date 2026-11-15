@@ -57,6 +57,7 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
     }
     private val actionIcons = LinkedHashMap<Int, Bitmap?>()
     private var cachedArt: Bitmap? = null
+    private var cachedTrimmedArt: Bitmap? = null
     private var cachedAccent = Color.rgb(24, 24, 27)
     private var controllerCallback: MediaController.Callback? = null
 
@@ -153,10 +154,10 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
         activeController = best
         val cb = object : MediaController.Callback() {
             override fun onPlaybackStateChanged(state: PlaybackState?) {
-                publish(best)
+                if (activeController === best) publish(best)
             }
             override fun onMetadataChanged(metadata: MediaMetadata?) {
-                publish(best)
+                if (activeController === best) publish(best)
             }
             override fun onSessionDestroyed() {
                 if (activeController === best) {
@@ -180,6 +181,7 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
         handler.removeCallbacks(playbackTimeout)
         pendingPlayback = null
         cachedArt = null
+        cachedTrimmedArt = null
         actionIcons.clear()
         cachedAccent = Color.rgb(24, 24, 27)
         val controller = activeController
@@ -196,19 +198,22 @@ class MediaNotificationListener : NotificationListenerService(), MediaCommands {
         val state = controller.playbackState
         if (meta == null) {
             cachedArt = null
+        cachedTrimmedArt = null
             cachedAccent = Color.rgb(24, 24, 27)
             MediaRepository.update(null)
             return
         }
 
-        val art = meta.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
-            ?: meta.getBitmap(MediaMetadata.METADATA_KEY_ART)
-            ?: meta.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+        val rawArt = meta.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)?.takeUnless { it.isRecycled }
+            ?: meta.getBitmap(MediaMetadata.METADATA_KEY_ART)?.takeUnless { it.isRecycled }
+            ?: meta.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)?.takeUnless { it.isRecycled }
 
-        if (art !== cachedArt) {
-            cachedArt = art
-            cachedAccent = if (art != null) com.island.dynamicisland.media.ArtworkColors.fromBitmap(art) else Color.rgb(24, 24, 27)
+        if (rawArt !== cachedArt) {
+            cachedArt = rawArt
+            cachedTrimmedArt = rawArt?.let { com.island.dynamicisland.media.ArtworkLetterbox.trim(it) }
+            cachedAccent = cachedTrimmedArt?.let { com.island.dynamicisland.media.ArtworkColors.fromBitmap(it) } ?: Color.rgb(24, 24, 27)
         }
+        val art = cachedTrimmedArt
 
         val isPlaying = state?.state == PlaybackState.STATE_PLAYING
         val durationMs = meta.getLong(MediaMetadata.METADATA_KEY_DURATION)

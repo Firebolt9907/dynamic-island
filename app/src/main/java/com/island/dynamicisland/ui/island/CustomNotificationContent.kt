@@ -39,12 +39,13 @@ internal class CustomNotificationHost(context: Context) : FrameLayout(context) {
     var interactive = false
     var tickerEnabled by mutableStateOf(true)
     private var applied: RemoteViews? = null
+    private var appliedParts: CustomActivityParts? = null
     private var appliedAccent: Int? = null
     private var appliedCompactMotion: Boolean? = null
 
     fun bind(content: RemoteViews, parts: CustomActivityParts? = null, timerOnly: Boolean = false,
              compactTimer: Boolean = false, controlsOnly: Boolean = false, accentColor: Int = Color.LTGRAY) {
-        if (applied === content && appliedAccent == accentColor && appliedCompactMotion == animateCompactTimers) return
+        if (applied === content && appliedParts == parts && appliedAccent == accentColor && appliedCompactMotion == animateCompactTimers) return
         // Reinflate on notification updates so removed controls/listeners cannot linger.
         removeAllViews()
         applied = null
@@ -122,6 +123,7 @@ internal class CustomNotificationHost(context: Context) : FrameLayout(context) {
                 }
                 addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
             }
+            appliedParts = parts
             appliedAccent = accentColor
             appliedCompactMotion = animateCompactTimers
             applied = content

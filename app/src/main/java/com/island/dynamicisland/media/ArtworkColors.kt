@@ -6,16 +6,16 @@ import android.graphics.Bitmap
 internal object ArtworkColors {
     const val FALLBACK: Int = -15198181 // #18181B
 
-    fun fromBitmap(bitmap: Bitmap): Int {
+    fun fromBitmap(bitmap: Bitmap): Int = runCatching {
         val sample = Bitmap.createScaledBitmap(bitmap, 16, 16, true)
         try {
             val pixels = IntArray(sample.width * sample.height)
             sample.getPixels(pixels, 0, sample.width, 0, 0, sample.width, sample.height)
-            return fromPixels(pixels)
+            fromPixels(pixels)
         } finally {
             if (sample !== bitmap) sample.recycle()
         }
-    }
+    }.getOrDefault(FALLBACK)
 
     fun fromPixels(pixels: IntArray): Int {
         if (pixels.isEmpty()) return FALLBACK

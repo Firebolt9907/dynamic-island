@@ -8,7 +8,7 @@ class MusicElementMorphTest {
         val height = 40f
         val secondaryWidth = compactMusicPillWidth(height)
         val density = 3f
-        val compactLeft = (8f + 24f + 6f) * density
+        val compactLeft = (8f + height * (CompactArtworkLeadingInset + CompactArtworkTrailingGap + CompactArtworkFraction) + 6f) * density
         assertEquals(compactLeft,
             MusicElementMorph.promotedBarsLeft(secondaryWidth, height, 900f, 0f, density), .001f)
         assertEquals(900f,
@@ -23,7 +23,7 @@ class MusicElementMorphTest {
     }
 
     @Test fun endpointsMatchCompactAndExpandedVisualizerSlots() {
-        assertPosition(140.62f, 10.73f, MusicElementMorph.visualizer(168f, 37f, 387f, 52f, 0f))
+        assertPosition((168f - 37f * (.2f + CompactVisualizerTrailingInset + CompactVisualizerWidthFraction)), (37f * (1f - CompactVisualizerHeightFraction) / 2f), MusicElementMorph.visualizer(168f, 37f, 387f, 52f, 0f))
         assertPosition(351f, 69f, MusicElementMorph.visualizer(168f, 37f, 387f, 52f, 1f))
     }
 
@@ -32,7 +32,7 @@ class MusicElementMorphTest {
             val p = step / 100f
             assertPosition(7.4f + (12f - 7.4f) * p, 7.4f + (52f - 7.4f) * p,
                 MusicElementMorph.art(37f, 52f, p))
-            assertPosition(140.62f + (351f - 140.62f) * p, 10.73f + (69f - 10.73f) * p,
+            assertPosition((168f - 37f * (.2f + CompactVisualizerTrailingInset + CompactVisualizerWidthFraction)) + (351f - (168f - 37f * (.2f + CompactVisualizerTrailingInset + CompactVisualizerWidthFraction))) * p, (37f * (1f - CompactVisualizerHeightFraction) / 2f) + (69f - (37f * (1f - CompactVisualizerHeightFraction) / 2f)) * p,
                 MusicElementMorph.visualizer(168f, 37f, 387f, 52f, p))
         }
     }
@@ -44,7 +44,7 @@ class MusicElementMorphTest {
                 val art = MusicElementMorph.art(37f, 52f, p, headerHeight)
                 val bars = MusicElementMorph.visualizer(168f, 37f, 387f, 52f, p, headerHeight)
                 val artSize = 37f * 0.60f + (54f - 37f * 0.60f) * p
-                val barsHeight = 37f * 0.42f + (20f - 37f * 0.42f) * p
+                val barsHeight = 37f * CompactVisualizerHeightFraction + (20f - 37f * CompactVisualizerHeightFraction) * p
                 assertEquals(art.top + artSize / 2f, bars.top + barsHeight / 2f, 0.0001f)
             }
             val art = MusicElementMorph.art(37f, 52f, 1f, headerHeight)

@@ -24,6 +24,16 @@ class LyricsParserTest {
         assertFalse(lyrics.wordSynced)
     }
 
+    @Test fun lrcDoesNotExtendLinesPastTheRecording() {
+        val lyrics = LyricsParser.lrc("[00:01.123]First\n[00:20.00]Outside recording", 5000)!!
+        assertEquals(listOf(LyricLine(1123, 5000, "First")), lyrics.lines)
+        assertEquals(-1, lyrics.lineAt(5000))
+    }
+
+    @Test fun extremeNegativeOffsetCannotWrapIntoTheStartOfTheRecording() {
+        assertNull(LyricsParser.lrc("[offset:-9223372036854775808]\n[00:01.00]Late", 5000))
+    }
+
     @Test fun enhancedLrcKeepsRealWordBoundariesAndSpaces() {
         val lyrics = LyricsParser.lrc("[offset:250]\n[00:01.00]<00:01.00>One <00:02.00>two", 4000)!!
         val line = lyrics.lines.single()

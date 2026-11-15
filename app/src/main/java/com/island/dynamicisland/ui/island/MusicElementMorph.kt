@@ -21,18 +21,19 @@ internal object MusicElementMorph {
 
     /** Start at the secondary's actual bars, then travel to the expanded header slot. */
     fun promotedBarsLeft(secondaryWidth: Float, height: Float, targetLeftPx: Float,
-                         progress: Float, density: Float, indicatorWidth: Float = height * .54f): Float =
-        mix((secondaryWidth - height * .2f - indicatorWidth) * density, targetLeftPx, progress)
+                         progress: Float, density: Float, indicatorWidth: Float = height * CompactVisualizerWidthFraction): Float =
+        mix((secondaryWidth - height * (.2f + CompactVisualizerTrailingInset) - indicatorWidth) * density, targetLeftPx, progress)
 
     /** Match visible edge gaps, accounting for the artwork's internal transparent inset. */
     fun symmetricPlacement(width: Float, height: Float, safeInset: Float, edgeGap: Float,
-        centerY: Float, artSlot: Float, artInset: Float, barsWidth: Float, barsHeight: Float): SharedMusicPlacement {
+        centerY: Float, artSlot: Float, artInset: Float, barsWidth: Float, barsHeight: Float,
+        artLead: Float = 0f, barsTrail: Float = 0f): SharedMusicPlacement {
         val margin = maxOf(edgeGap, safeInset + artInset)
         val halfHeight = maxOf(artSlot, barsHeight) / 2f
         val center = centerY.coerceIn(safeInset + halfHeight,
             (height - safeInset - halfHeight).coerceAtLeast(safeInset + halfHeight))
-        return SharedMusicPlacement(margin - artInset, center - artSlot / 2f,
-            width - margin - barsWidth, center - barsHeight / 2f)
+        return SharedMusicPlacement(margin - artInset + artLead, center - artSlot / 2f,
+            width - margin - barsWidth - barsTrail, center - barsHeight / 2f)
     }
 
     /** Shared elements arrive at the same scale as the expanded header's reserved slots. */
@@ -56,7 +57,7 @@ internal object MusicElementMorph {
 
     fun visualizer(compactWidth: Float, compactHeight: Float, expandedWidth: Float,
         contentTop: Float, progress: Float, headerHeight: Float = 54f) = MusicElementPosition(
-        left = mix(compactWidth - compactHeight * (0.20f + 0.54f), expandedWidth - 12f - 24f, progress),
-        top = mix(compactHeight * (1f - 0.42f) / 2f, contentTop + (headerHeight - 20f) / 2f, progress),
+        left = mix(compactWidth - compactHeight * (0.20f + CompactVisualizerTrailingInset + CompactVisualizerWidthFraction), expandedWidth - 12f - 24f, progress),
+        top = mix(compactHeight * (1f - CompactVisualizerHeightFraction) / 2f, contentTop + (headerHeight - 20f) / 2f, progress),
     )
 }

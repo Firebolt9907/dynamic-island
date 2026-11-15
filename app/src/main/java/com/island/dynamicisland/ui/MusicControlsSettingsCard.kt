@@ -28,15 +28,15 @@ fun MusicControlsSettingsCard() {
                 onValueChange = MusicControlsConfig::remember), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Remember last music app")
-                    Text("Keep its control icons available after playback stops.", style = MaterialTheme.typography.bodySmall)
+                    Text("Keep its control icons available after playback stops.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(settings.remember, onCheckedChange = null)
             }
-            if (app == null) Text("Play music to discover available controls.", style = MaterialTheme.typography.bodyMedium)
+            if (app == null) Text("Play music in any app to choose its extra controls.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             else {
                 Text(app.name, style = MaterialTheme.typography.labelLarge)
                 Text("Choose up to two extra controls. Choices are saved separately for each music app.",
-                    style = MaterialTheme.typography.bodySmall)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 val slots = MusicControlsConfig.slots(app.packageName)
                 SlotPicker("Left of Previous", slots.left, app.actions) { MusicControlsConfig.select(app.packageName, true, it) }
                 SlotPicker("Right of Next", slots.right, app.actions) { MusicControlsConfig.select(app.packageName, false, it) }

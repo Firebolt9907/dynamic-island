@@ -1,5 +1,6 @@
 package com.island.dynamicisland.ui.island
 
+import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -10,7 +11,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,18 +48,50 @@ internal fun musicPeekDuration(textWidthDp: Float, availableWidthDp: Float): Lon
     (2_600L + ((textWidthDp - availableWidthDp).coerceAtLeast(0f) / 35f * 1_000).toLong())
         .coerceIn(4_500L, 30_000L)
 
+internal val MusicPeekHorizontalPadding = 16.dp
+
+/** Shared by layout and the scroll-duration estimate so a long title gets one full pass. */
+internal val MusicPeekTextStyle = TextStyle(fontSize = 13.sp, lineHeight = 17.sp,
+    fontWeight = FontWeight.SemiBold, letterSpacing = (-0.1).sp)
+
+/** Title in white, artist dimmed and tinted toward the artwork, on one scrolling line. */
+internal fun musicPeekText(track: NowPlaying?, accent: Color): AnnotatedString = buildAnnotatedString {
+    val title = track?.title?.takeIf { it.isNotBlank() }
+    val artist = track?.artist?.takeIf { it.isNotBlank() }
+    if (title != null) withStyle(SpanStyle(color = Color.White)) { append(title) }
+    if (title != null && artist != null) withStyle(SpanStyle(color = Color(0xFF6E6E74))) { append("  ·  ") }
+    if (artist != null) withStyle(SpanStyle(color = lerp(Color(0xFFA1A1A8), accent, .28f),
+        fontWeight = FontWeight.Medium)) { append(artist) }
+}
+
 @Composable
-internal fun MusicPeek(label: String, headerHeight: Dp, topPadding: Dp, accent: Color, appear: () -> Float) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = topPadding, bottom = 6.dp)) {
+internal fun MusicPeek(track: NowPlaying?, headerHeight: Dp, topPadding: Dp, accent: Color, appear: () -> Float) {
+    val text = musicPeekText(track, accent)
+    Column(Modifier.fillMaxWidth().padding(horizontal = MusicPeekHorizontalPadding)
+        .padding(top = topPadding, bottom = 9.dp)) {
         // Artwork and equalizer are the existing shared elements in the upper row.
-        Spacer(Modifier.height(headerHeight))
-        key(label) {
-            Text(label, color = androidx.compose.ui.graphics.lerp(Color(0xFF9A9AA1), accent, .2f),
-                fontSize = 12.sp, lineHeight = 16.sp,
+        Spacer(Modifier.height(headerHeight + 2.dp))
+        key(text.text) {
+            Text(text, style = MusicPeekTextStyle,
                 maxLines = 1, softWrap = false,
                 modifier = Modifier.fillMaxWidth().expandedContentEntrance(appear, 0,
-                    topPadding.value + headerHeight.value + 8f, headerHeight.value)
-                    .basicMarquee(iterations = 1, initialDelayMillis = 900, velocity = 35.dp))
+                    topPadding.value + headerHeight.value + 10f, headerHeight.value)
+                    .marqueeEdgeFade()
+                    .basicMarquee(iterations = 1, initialDelayMillis = 1_100, velocity = 32.dp,
+                        spacing = MarqueeSpacing(28.dp)))
         }
     }
+}
+
+/** Soften both ends so scrolling text slides under the edges instead of being cut off. */
+private fun Modifier.marqueeEdgeFade(): Modifier = graphicsLayer {
+    compositingStrategy = CompositingStrategy.Offscreen
+}.drawWithContent {
+    drawContent()
+    val fade = 10.dp.toPx().coerceAtMost(size.width / 4f)
+    if (fade <= 0f) return@drawWithContent
+    drawRect(Brush.horizontalGradient(
+        0f to Color.Transparent, fade / size.width to Color.Black,
+        1f - fade / size.width to Color.Black, 1f to Color.Transparent),
+        blendMode = BlendMode.DstIn)
 }

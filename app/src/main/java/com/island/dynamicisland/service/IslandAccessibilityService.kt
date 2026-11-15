@@ -218,15 +218,41 @@ class IslandAccessibilityService : AccessibilityService(),
         }
         touchView = View(this).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setOnTouchListener { _, event -> forwardTouch(event) }
+            setOnTouchListener { v, event -> forwardTouch(v, event) }
         }
         windowManager.addView(touchView, touchParams)
         applyLayout()
     }
 
-    private fun forwardTouch(event: MotionEvent): Boolean {
+    /**
+     * Raw (display-space) position of the visuals window's origin. Usually (0, 0), but system
+     * transforms such as one-handed mode translate every accessibility overlay, so raw
+     * coordinates must be rebased onto the visuals window before they reach Compose.
+     */
+    private var overlayRawOriginX = 0f
+    private var overlayRawOriginY = 0f
+    private val receiverLocation = IntArray(2)
+    private val overlayLocation = IntArray(2)
+
+    private fun updateOverlayRawOrigin(receiver: View, event: MotionEvent) {
+        val overlay = overlayView ?: return
+        // rawX - x is the receiving window's raw origin. Removing the receiver's offset from
+        // the visuals window (both measured in the same window-layout space) yields the
+        // visuals window's raw origin, whatever transform the display area applies.
+        receiver.getLocationOnScreen(receiverLocation)
+        overlay.getLocationOnScreen(overlayLocation)
+        overlayRawOriginX = event.rawX - event.x - (receiverLocation[0] - overlayLocation[0])
+        overlayRawOriginY = event.rawY - event.y - (receiverLocation[1] - overlayLocation[1])
+    }
+
+    private fun forwardTouch(receiver: View, event: MotionEvent): Boolean {
+                // The display-area transform cannot change mid-gesture; sample it on DOWN so later
+                // events stay correct even while the touch window is being resized or moved.
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) updateOverlayRawOrigin(receiver, event)
+                val overlayX = event.rawX - overlayRawOriginX
+                val overlayY = event.rawY - overlayRawOriginY
                 if (event.actionMasked == MotionEvent.ACTION_DOWN && captureOutside &&
-                    !pillBounds.contains(event.rawX.toInt(), event.rawY.toInt())) {
+                    !pillBounds.contains(overlayX.toInt(), overlayY.toInt())) {
                     swallowingOutsideGesture = true
                     dismissRequest++
                 }
@@ -242,7 +268,7 @@ class IslandAccessibilityService : AccessibilityService(),
                     dismissRequest++
                 } else {
                     val forwarded = MotionEvent.obtain(event)
-                    forwarded.offsetLocation(event.rawX - event.x, event.rawY - event.y)
+                    forwarded.offsetLocation(overlayX - event.x, overlayY - event.y)
                     overlayView?.dispatchTouchEvent(forwarded)
                     forwarded.recycle()
                 }
@@ -267,9 +293,9 @@ class IslandAccessibilityService : AccessibilityService(),
                     visibility = View.GONE
                 }
                 val target = SecondaryTouch(view, params)
-                view.setOnTouchListener { _, event ->
+                view.setOnTouchListener { v, event ->
                     if (event.actionMasked == MotionEvent.ACTION_DOWN) target.gestureActive = true
-                    forwardTouch(event)
+                    forwardTouch(v, event)
                     if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
                         target.gestureActive = false
                         syncSecondaryWindow()

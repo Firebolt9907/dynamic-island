@@ -115,7 +115,7 @@ internal fun IslandArtwork(np: NowPlaying?, live: LiveUpdate?, size: Dp, corner:
     }
 }
 
-private fun indicatorStyle(live: LiveUpdate) = TextStyle(
+internal fun indicatorStyle(live: LiveUpdate) = TextStyle(
     fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold,
     fontFamily = IslandFontFamily,
     fontFeatureSettings = "tnum",
@@ -152,12 +152,22 @@ internal fun sportsScoreTrailingWidth(score: SportsScore, height: Dp, scoresOnly
 }
 
 @Composable
-internal fun compactLeadingWidth(live: LiveUpdate?, height: Dp, scoresOnly: Boolean = false): Dp {
+internal fun compactLeadingWidth(live: LiveUpdate?, height: Dp, scoresOnly: Boolean = false,
+                                 grouped: Boolean = false, secondary: Boolean = false): Dp {
+    agentCompactParts(live?.agents, grouped, secondary)?.let {
+        return agentSegmentsWidth(it.leading, indicatorStyle(live!!), trailingPad = false, showCounts = it.showCounts)
+    }
     if (live?.sportsScore != null) {
         return sportsScoreLeadingWidth(live.sportsScore, height, scoresOnly)
     }
-    return height * if (live == null) .60f else compactLiveIconFraction
+    return height * if (live == null) CompactArtworkFraction + CompactArtworkLeadingInset + CompactArtworkTrailingGap else compactLiveIconFraction
 }
+
+/** Only a plain status word becomes a glyph; timers, navigation, transfers and scores keep their own indicators. */
+private fun statusGlyph(live: LiveUpdate): com.island.dynamicisland.live.CompactStatusGlyph? =
+    if (live.agents != null || live.countdown != null || live.stopwatch != null || live.isNavigation || live.transfer != null ||
+        live.customParts != null || live.sportsScore != null || live.screenCapture != null || live.isCall) null
+    else com.island.dynamicisland.live.compactStatusGlyph(live.status)
 
 @Composable
 private fun indicatorLabel(live: LiveUpdate): String = live.countdown?.let { countdownTime(it) } ?: live.stopwatch?.let { stopwatchTime(it) }
@@ -166,12 +176,19 @@ private fun indicatorLabel(live: LiveUpdate): String = live.countdown?.let { cou
     else compactLiveStatus(live.status, live.progress, live.text, live.details)
 
 @Composable
-internal fun compactIndicatorWidth(live: LiveUpdate?, height: Dp = 36.dp, scoresOnly: Boolean = false): Dp {
+internal fun compactIndicatorWidth(live: LiveUpdate?, height: Dp = 36.dp, scoresOnly: Boolean = false,
+                                   grouped: Boolean = false, secondary: Boolean = false): Dp {
     if (live == null) return 24.dp
+    agentCompactParts(live.agents, grouped, secondary)?.let {
+        // A secondary bubble has no logo, so its content needs no extra edge padding beyond the pill's own.
+        return agentSegmentsWidth(it.trailing, indicatorStyle(live), trailingPad = !secondary, showCounts = it.showCounts)
+    }
     if (live.sportsScore != null) {
         return sportsScoreTrailingWidth(live.sportsScore, height, scoresOnly)
     }
     if (live.transfer != null) return 20.dp
+    live.agents?.let { return agentIndicatorWidth(it, indicatorStyle(live)) }
+    if (statusGlyph(live) != null) return CompactStatusGlyphWidth
     live.customParts?.let { parts ->
         // Reserve enough digits at hour boundaries without imposing a fixed empty slot.
         // The original widget still owns the actual displayed running/paused value.
@@ -188,8 +205,14 @@ internal fun compactIndicatorWidth(live: LiveUpdate?, height: Dp = 36.dp, scores
 }
 
 @Composable
-internal fun IslandIndicator(np: NowPlaying?, live: LiveUpdate?, color: Color, modifier: Modifier, active: Boolean = true) {
-    if (live == null) Equalizer(color, playing = np?.isPlaying == true, modifier = modifier)
+internal fun IslandIndicator(np: NowPlaying?, live: LiveUpdate?, color: Color, modifier: Modifier, active: Boolean = true,
+                             grouped: Boolean = false, secondary: Boolean = false) {
+    val agentParts = agentCompactParts(live?.agents, grouped, secondary)
+    if (agentParts != null) {
+        AgentSegmentsRow(agentParts.trailing, Color(live!!.accentColor), indicatorStyle(live), active,
+            modifier.size(compactIndicatorWidth(live, grouped = grouped, secondary = secondary), 20.dp), trailingPad = !secondary, showCounts = agentParts.showCounts)
+    }
+    else if (live == null) Equalizer(color, playing = np?.isPlaying == true, modifier = modifier)
     else if (live.transfer != null) {
         val tint = Color(live.accentColor)
         val progress = rememberLiveProgress(live.progress ?: 0f, active && !live.transfer.paused)
@@ -208,6 +231,13 @@ internal fun IslandIndicator(np: NowPlaying?, live: LiveUpdate?, color: Color, m
         CustomNotificationContent(live.customContent, live.key, false, active,
             modifier.size(compactIndicatorWidth(live), 20.dp), live.customParts, timerOnly = true, compactTimer = true,
             accentColor = live.accentColor)
+    }
+    else if (live.agents != null) {
+        AgentSummaryIndicator(live.agents, Color(live.accentColor), indicatorStyle(live), active,
+            modifier.size(compactIndicatorWidth(live), 20.dp))
+    }
+    else if (statusGlyph(live) != null) {
+        CompactStatusGlyphView(statusGlyph(live)!!, live.status.trim(), Color(live.accentColor), active, modifier)
     }
     else Box(modifier.size(compactIndicatorWidth(live), 20.dp), contentAlignment = Alignment.Center) {
         val label = indicatorLabel(live)
@@ -236,8 +266,10 @@ internal fun LiveActivityReveal(appear: () -> Float, order: Int, compactHeight: 
 internal fun ExpandedLiveUpdate(live: LiveUpdate, appear: () -> Float, interactive: Boolean,
                                 headerHeight: Dp, topPadding: Dp, islandCorner: Dp,
                                 stopwatchActive: Boolean, onOpenSource: () -> Unit, compactHeight: Dp = 36.dp, cameraSafeTop: Dp = 32.dp,
-                                replacementKeys: Map<String, Int> = emptyMap()) {
-    androidx.compose.runtime.CompositionLocalProvider(LocalLiveAccent provides Color(live.accentColor)) {
+                                replacementKeys: Map<String, Int> = emptyMap(),
+                                cornerSmoothing: Float = Squircle.SMOOTHING) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalLiveAccent provides Color(live.accentColor),
+        LocalIslandCornerSmoothing provides cornerSmoothing) {
         ExpandedLiveUpdateContent(live, appear, interactive, headerHeight, topPadding, islandCorner,
             stopwatchActive, onOpenSource, compactHeight, cameraSafeTop, replacementKeys)
     }
@@ -419,7 +451,8 @@ private fun ExpandedLiveUpdateContent(live: LiveUpdate, appear: () -> Float, int
     }
     val context = androidx.compose.ui.platform.LocalContext.current
     val edgeInset = 12.dp
-    val buttonCorner = 18.dp
+    // Concentric with the card: its corner less the gap between the card and button edges.
+    val buttonCorner = (islandCorner - edgeInset).coerceAtLeast(0.dp)
     val secondaryClock = live.text.isNotBlank() || live.details.isNotBlank()
     val isSports = live.sportsScore != null
     val headline = com.island.dynamicisland.live.activityHeadline(live)
@@ -445,18 +478,29 @@ private fun ExpandedLiveUpdateContent(live: LiveUpdate, appear: () -> Float, int
                                 fontSize = 13.sp, lineHeight = 17.sp, fontFamily = IslandFontFamily)
                         }
                     }
-                    Spacer(Modifier.height((cameraInset - 17.dp).coerceAtLeast(3.dp)))
+                    val labelGap = (cameraInset - 17.dp).coerceAtLeast(3.dp)
+                    Spacer(Modifier.height(labelGap))
                     if (live.isNavigation) {
                         ContentUpdateText(live.turnDistance ?: "Next turn", replacementKey = 0,
                             style = TextStyle(color = liveAccent, fontSize = 22.sp, lineHeight = 26.sp,
                                 fontWeight = FontWeight.Bold), contentAlignment = Alignment.CenterStart,
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                    ContentUpdateText(headline, replacementKey = replacementKeys["headline"] ?: 0, style = TextStyle(color = Color.White,
-                        fontSize = if (live.isNavigation) 15.sp else 18.sp,
-                        lineHeight = if (live.isNavigation) 19.sp else 22.sp,
-                        fontWeight = FontWeight.SemiBold), contentAlignment = Alignment.CenterStart,
-                        maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    // Agent state counts share the headline's first line rather than the small label row,
+                    // so their larger glyphs neither crowd the island's top edge nor push the headline down.
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        ContentUpdateText(headline, replacementKey = replacementKeys["headline"] ?: 0, style = TextStyle(color = Color.White,
+                            fontSize = if (live.isNavigation) 15.sp else 18.sp,
+                            lineHeight = if (live.isNavigation) 19.sp else 22.sp,
+                            fontWeight = FontWeight.SemiBold), contentAlignment = Alignment.CenterStart,
+                            modifier = Modifier.weight(1f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        live.agents?.let { agents ->
+                            // Centre the 26dp glyphs on the label-plus-headline block rather than the headline alone,
+                            // so they sit level with the whole header without changing its layout.
+                            AgentSummaryIndicator(agents, Color(live.accentColor), indicatorStyle(live), stopwatchActive,
+                                Modifier.padding(start = 8.dp).offset(y = (22.dp - 17.dp - labelGap) / 2 - 13.dp), expanded = true)
+                        }
+                    }
                 }
                 live.countdown?.let { clock ->
                     NumericTickerText(countdownTime(clock, active = stopwatchActive), enabled = stopwatchActive, color = liveAccent,
@@ -505,6 +549,14 @@ private fun ExpandedLiveUpdateContent(live: LiveUpdate, appear: () -> Float, int
                             fontWeight = FontWeight.SemiBold, fontFamily = IslandFontFamily, compact = false)
                     }
                 }
+            }
+        } else if (!live.agents?.threads.isNullOrEmpty()) {
+            // Agent summaries: a styled thread list replaces the raw status lines, and the
+            // "N active" detail is dropped since the headline and counts already say it.
+            LiveActivityReveal(appear, 1, compactHeight, topPadding) {
+                AgentThreadList(live.agents!!.threads, Color(live.accentColor), stopwatchActive, Modifier
+                    .then(if (interactive) Modifier.clickable(onClick = onOpenSource) else Modifier)
+                    .padding(horizontal = 8.dp).padding(top = 12.dp))
             }
         } else {
             if (live.text.isNotBlank() && !live.text.equals(headline, ignoreCase = true) && !isSports) LiveActivityReveal(appear, 1, compactHeight, topPadding) {
@@ -695,7 +747,7 @@ private fun LiveActivityActionButton(title: String, interactive: Boolean, corner
     val background by animateColorAsState(if (pressed && interactive) liveAccent.copy(alpha = .30f) else liveAccent.copy(alpha = .12f),
         label = "liveActionHighlight")
     Box(modifier.graphicsLayer { scaleX = scale; scaleY = scale }
-        .clip(RoundedCornerShape(corner)).background(background)
+        .clip(SquircleShape(corner, LocalIslandCornerSmoothing.current)).background(background)
         // Hidden controls must not intercept the compact island's hold gesture.
         .then(if (interactive) Modifier.clickable(interactionSource = interaction,
             indication = ripple(color = liveAccent), role = androidx.compose.ui.semantics.Role.Button,
@@ -875,11 +927,13 @@ internal fun CompactLiveActivity(live: LiveUpdate, height: Dp, grouped: Boolean 
         CompactSportsLiveActivity(live.sportsScore, height, grouped, grouping = grouping, scoresOnly = scoresOnly)
         return
     }
+    val agentParts = agentCompactParts(live.agents, grouped)
     Row(Modifier.fillMaxSize().padding(horizontal = height * .2f), verticalAlignment = Alignment.CenterVertically) {
         if (grouped) Spacer(Modifier.weight(1f))
-        IslandArtwork(null, live, height * compactLiveIconFraction, 0.dp, Modifier, liveIconInset = { 0f })
+        if (agentParts == null) IslandArtwork(null, live, height * compactLiveIconFraction, 0.dp, Modifier, liveIconInset = { 0f })
+        else AgentSegmentsRow(agentParts.leading, Color(live.accentColor), indicatorStyle(live), true, Modifier, trailingPad = false, showCounts = agentParts.showCounts)
         if (grouped) Spacer(Modifier.width(6.dp)) else Spacer(Modifier.weight(1f))
-        IslandIndicator(null, live, liveAccent, Modifier)
+        IslandIndicator(null, live, liveAccent, Modifier, grouped = grouped)
     }
 }
 
@@ -887,6 +941,10 @@ internal fun CompactLiveActivity(live: LiveUpdate, height: Dp, grouped: Boolean 
 @Composable
 internal fun SecondaryActivityContent(np: NowPlaying?, live: LiveUpdate?, music: Boolean,
                                       height: Dp, transfer: () -> Float, scoresOnly: Boolean = false) {
+    if (!music && live?.agents != null) {
+        SecondaryAgentContent(live, height)
+        return
+    }
     val liveIndicatorWidth = compactIndicatorWidth(live, height)
     live?.sportsScore?.takeIf { !music }?.let { score ->
         if (scoresOnly && score.scoreOne.isNotBlank() && score.scoreTwo.isNotBlank()) {
@@ -914,27 +972,39 @@ internal fun SecondaryActivityContent(np: NowPlaying?, live: LiveUpdate?, music:
         return
     }
     androidx.compose.ui.layout.Layout(content = {
-        IslandArtwork(np, if (music) null else live, height * (if (music) .6f else compactLiveIconFraction), height * .6f * .32f,
+        IslandArtwork(np, if (music) null else live, height * (if (music) CompactArtworkFraction else compactLiveIconFraction), height * CompactArtworkFraction * CompactArtworkCornerFraction,
             Modifier.graphicsLayer { alpha = if (music) transfer() else 1f }, liveIconInset = { 0f })
         if (music) Equalizer(np?.let { Color(it.staticArtworkAccentColor).brightAccent() } ?: Color.White,
-            np?.isPlaying == true, modifier = Modifier.size(height * .54f, height * .42f))
+            np?.isPlaying == true, modifier = Modifier.size(height * CompactVisualizerWidthFraction, height * CompactVisualizerHeightFraction))
         else IslandIndicator(null, live, liveAccent, Modifier.graphicsLayer { alpha = transfer() })
     }) { measurables, constraints ->
-        val artSize = (height * (if (music) .6f else compactLiveIconFraction)).roundToPx()
+        val artSize = (height * (if (music) CompactArtworkFraction else compactLiveIconFraction)).roundToPx()
         val art = measurables[0].measure(androidx.compose.ui.unit.Constraints.fixed(artSize, artSize))
-        val indicatorWidth = if (music) (height * .54f).roundToPx() else liveIndicatorWidth.roundToPx()
-        val indicatorHeight = if (music) (height * .42f).roundToPx() else 20.dp.roundToPx()
+        val indicatorWidth = if (music) (height * CompactVisualizerWidthFraction).roundToPx() else liveIndicatorWidth.roundToPx()
+        val indicatorHeight = if (music) (height * CompactVisualizerHeightFraction).roundToPx() else 20.dp.roundToPx()
         val indicator = measurables[1].measure(androidx.compose.ui.unit.Constraints.fixed(indicatorWidth, indicatorHeight))
         val t = transfer().coerceIn(0f, 1f)
         val h = height.roundToPx()
         val pad = (height * .2f).toPx()
         val minimalWidth = minOf(h, constraints.maxWidth)
-        val artX = (minimalWidth - artSize) / 2f * (1f - t) + pad * t
-        val endX = if (music) constraints.maxWidth - pad - indicatorWidth else constraints.maxWidth - indicatorWidth - pad
+        val artX = (minimalWidth - artSize) / 2f * (1f - t) + (pad + if (music) (height * CompactArtworkLeadingInset).toPx() else 0f) * t
+        val endX = if (music) constraints.maxWidth - pad - (height * CompactVisualizerTrailingInset).toPx() - indicatorWidth else constraints.maxWidth - indicatorWidth - pad
         val indicatorX = (minimalWidth - indicatorWidth) / 2f * (1f - t) + endX * t
         layout(constraints.maxWidth, h) {
             art.place(artX.toInt(), (h - artSize) / 2)
             indicator.place(indicatorX.toInt(), (h - indicatorHeight) / 2)
         }
+    }
+}
+
+/** A secondary agent bubble drops the logo: its counts alone, or just the leading glyph in a round bubble. */
+@Composable
+private fun SecondaryAgentContent(live: LiveUpdate, height: Dp) {
+    val parts = agentCompactParts(live.agents, secondary = true) ?: return
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val round = maxWidth <= height + 1.dp
+        val segments = if (round) parts.trailing.take(1).map { it.first to 1 } else parts.trailing
+        AgentSegmentsRow(segments, Color(live.accentColor), indicatorStyle(live), true, Modifier,
+            trailingPad = false, arrangement = Arrangement.Center)
     }
 }

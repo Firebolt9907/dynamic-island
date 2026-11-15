@@ -41,12 +41,14 @@ data class LiveUpdate(
     val isCall: Boolean = false,
     val callAvatar: Bitmap? = null,
     val transfer: TransferActivity? = null,
+    val agents: AgentActivity? = null,
 )
 
 object LiveUpdateRepository {
     private val active = LinkedHashMap<String, LiveUpdate>()
     private val sportsStatusMemory = SportsStatusMemory()
     private val footballPlayHistory = FootballPlayHistory()
+    private val agentFinishMemory = AgentFinishMemory()
     private val listState = MutableStateFlow<List<LiveUpdate>>(emptyList())
     private val state = MutableStateFlow<LiveUpdate?>(null)
     val activities: StateFlow<List<LiveUpdate>> = listState.asStateFlow()
@@ -60,13 +62,16 @@ object LiveUpdateRepository {
         else -> 3
     }
 
-    fun put(key: String, update: LiveUpdate?) {
+    fun put(key: String, update: LiveUpdate?, now: Long = System.currentTimeMillis()) {
         if (update != null) {
-            active[key] = update.sportsScore?.let {
-                update.copy(sportsScore = footballPlayHistory.remember(key, sportsStatusMemory.remember(key, it)))
-            } ?: update.also { sportsStatusMemory.forget(key); footballPlayHistory.forget(key) }
+            val tracked = update.agents?.let { update.copy(agents = agentFinishMemory.remember(key, it, now)) }
+                ?: update.also { agentFinishMemory.forget(key) }
+            active[key] = tracked.sportsScore?.let {
+                tracked.copy(sportsScore = footballPlayHistory.remember(key, sportsStatusMemory.remember(key, it)))
+            } ?: tracked.also { sportsStatusMemory.forget(key); footballPlayHistory.forget(key) }
         } else {
             active.remove(key)
+            agentFinishMemory.forget(key)
             sportsStatusMemory.forget(key)
             footballPlayHistory.forget(key)
         }
@@ -78,6 +83,7 @@ object LiveUpdateRepository {
     fun clear() {
         sportsStatusMemory.clear()
         footballPlayHistory.clear()
+        agentFinishMemory.clear()
         if (active.isEmpty()) return
         active.clear()
         listState.value = emptyList()
@@ -265,6 +271,9 @@ fun readLiveUpdate(context: Context, sbn: StatusBarNotification): LiveUpdate? {
         countdown = clock?.countdown,
         progressStyle = if (Build.VERSION.SDK_INT >= 36 && style != null) readLiveProgressStyle(context, style) else null,
         transfer = transfer,
+        agents = if (isCall || isHotspot || transfer != null || sportsScore != null) null else parseAgentActivity(
+            extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }
+                ?: text(Notification.EXTRA_BIG_TEXT).ifBlank { text(Notification.EXTRA_TEXT) }.lines()),
         isHotspot = isHotspot,
         isCall = isCall,
         callAvatar = if (isCall) runCatching {

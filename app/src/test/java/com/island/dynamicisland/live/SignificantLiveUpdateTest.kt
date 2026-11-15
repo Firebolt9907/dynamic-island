@@ -118,4 +118,17 @@ class SignificantLiveUpdateTest {
         assertEquals(setOf("headline", "text"),
             autoExpansionTextChanges(before, before.copy(text = "Your order is on the way")))
     }
+
+    @Test fun agentCountsStayQuietButNewInputPromptsExpand() {
+        fun agents(vararg lines: String) = activity("T3", status = "Working").copy(agents = parseAgentActivity(lines.toList()))
+        val tracker = SignificantLiveUpdateTracker()
+        assertEquals("live", tracker.changedActivity(listOf(agents("Working Fix login · web"))))
+        assertNull(tracker.changedActivity(listOf(agents("Working Fix login · web", "Working Add tests · web"))))
+        assertNull(tracker.changedActivity(listOf(agents("Done Fix login · web", "Working Add tests · web"))))
+        assertEquals("live", tracker.changedActivity(listOf(agents("Done Fix login · web", "Needs input Add tests · web"))))
+        // The prompt being answered is not news.
+        assertNull(tracker.changedActivity(listOf(agents("Done Fix login · web", "Working Add tests · web"))))
+        // The same thread asking again is.
+        assertEquals("live", tracker.changedActivity(listOf(agents("Done Fix login · web", "Needs input Add tests · web"))))
+    }
 }

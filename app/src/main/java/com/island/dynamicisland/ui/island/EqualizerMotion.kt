@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.coroutines.coroutineContext
 
-private val equalizerPeriods = intArrayOf(520, 700, 610, 470, 560)
+private val equalizerPeriods = intArrayOf(520, 700, 610, 470, 560, 650)
 
 /** Wait without requesting frames when motion is disabled; keep the same level instances. */
 internal suspend fun animateEqualizer(

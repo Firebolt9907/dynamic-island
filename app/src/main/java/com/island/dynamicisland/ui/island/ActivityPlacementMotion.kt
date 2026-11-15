@@ -20,6 +20,12 @@ internal object ActivityBubbleMotion {
     val arrival = tween<Float>(620, easing = travelEasing)
     val merge = tween<Float>(380, easing = travelEasing)
     val departure = tween<Float>(460, easing = travelEasing)
+
+    /** Scale a bubble (or its content) has while fully faded out. */
+    const val FADED_SCALE = .7f
+
+    /** Scale paired with a fade, so entering bubbles grow from 70% as they appear and leaving ones shrink back. */
+    fun fadeScale(alpha: Float): Float = FADED_SCALE + (1f - FADED_SCALE) * alpha.coerceIn(0f, 1f)
 }
 
 internal data class ActivityPlacement(val center: Float, val width: Float, val alpha: Float, val detail: Float, val grouping: Float = 0f) {
@@ -55,6 +61,14 @@ internal class CameraReflowMotion {
     /** Every activity is invisible from here on; the layout may be swapped. */
     val hidden get() = absorption.value >= HIDDEN
     val active get() = running || absorption.value != 0f
+    /** True while the new layout grows out of the lens, until it settles or is reversed. */
+    var emerging by mutableStateOf(false)
+        private set
+    /**
+     * Touches may land once an entrance has mostly grown out; waiting for the overshoot to
+     * settle makes rapid taps miss. An absorption in progress is never pressable.
+     */
+    val pressable get() = !active || (emerging && absorption.value <= PRESSABLE)
 
     /** How far [key] has been drawn into the camera. */
     fun absorption(key: String?): Float {
@@ -83,6 +97,7 @@ internal class CameraReflowMotion {
     suspend fun collapse(trailingKeys: Set<String>) = coroutineScope {
         val fresh = !running && absorption.value == 0f
         running = true
+        emerging = false
         trailing = trailingKeys
         launch { contentVisibility.animateTo(0f, ActivityReflowSpecs.contentOut) }
         if (hidden) return@coroutineScope
@@ -103,6 +118,7 @@ internal class CameraReflowMotion {
     /** The new layout grows out of the lens from rest, overshoots slightly, and settles. */
     suspend fun emerge(trailingKeys: Set<String>) {
         trailing = trailingKeys
+        emerging = true
         try {
             coroutineScope {
                 // No extra wait: the geometric gate already withholds content until the
@@ -111,13 +127,26 @@ internal class CameraReflowMotion {
                 absorption.animateTo(0f, ActivityReflowSpecs.emergence, handoffVelocity) { handoffVelocity = velocity }
                 handoffVelocity = 0f
             }
-        } finally { if (absorption.value == 0f && contentVisibility.value == 1f) running = false }
+        } finally {
+            emerging = false
+            if (absorption.value == 0f && contentVisibility.value == 1f) running = false
+        }
+    }
+
+    /** Start already inside the lens, e.g. after something else carried the island there. */
+    suspend fun hide() {
+        running = true
+        emerging = false
+        handoffVelocity = 0f
+        absorption.snapTo(1f)
+        contentVisibility.snapTo(0f)
     }
 
     suspend fun reset() {
         absorption.snapTo(0f)
         contentVisibility.snapTo(1f)
         handoffVelocity = 0f
+        emerging = false
         running = false
     }
 
@@ -125,6 +154,8 @@ internal class CameraReflowMotion {
         /** Trailing activities reach the lens this much earlier and leave it this much later. */
         const val TRAIL = .16f
         const val HIDDEN = .92f
+        /** Below this absorption an emerging layout is large enough to take a tap. */
+        const val PRESSABLE = .35f
         /** Content is withheld across this absorption range, well before the silhouette fades. */
         const val CONTENT_GATE_START = .15f
         const val CONTENT_GATE_END = .55f
@@ -269,11 +300,12 @@ internal fun activityPlacements(slots: IslandActivities, primaryWidth: Float, bu
     }
 }
 
-internal fun compactMusicPillWidth(height: Float): Float = height * (0.4f + 0.6f + 0.54f) + 6f
+internal fun compactMusicPillWidth(height: Float): Float = height * (0.4f + CompactArtworkLeadingInset + CompactArtworkTrailingGap + CompactArtworkFraction + CompactVisualizerWidthFraction + CompactVisualizerTrailingInset) + 6f
 
 internal fun compactActivityPillWidth(height: Float, indicatorWidth: Float,
                                       leadingWidth: Float = height * .6f): Float =
-    if (indicatorWidth > 0f) height * .4f + leadingWidth + 6f + indicatorWidth else height
+    if (indicatorWidth > 0f && leadingWidth <= 0f) maxOf(height, height * .4f + indicatorWidth) // No leading icon, so no gap.
+    else if (indicatorWidth > 0f) height * .4f + leadingWidth + 6f + indicatorWidth else height
 
 /** Crossfade late in the merge, with zero endpoint velocity on opening and reversal. */
 internal fun activityHandoffFraction(transfer: Float): Float {

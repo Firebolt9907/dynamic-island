@@ -90,8 +90,18 @@ object IslandConfig {
         )
     }
 
-    fun update(t: IslandTuning) {
+    /**
+     * Apply [t] live. Slider drags pass `persist = false` on every frame and persist once
+     * when the drag ends, rather than rewriting SharedPreferences dozens of times a second.
+     */
+    fun update(t: IslandTuning, persist: Boolean = true) {
         _tuning.value = t
+        if (persist) persist()
+    }
+
+    /** Write the current in-memory tuning to disk. */
+    fun persist() {
+        val t = _tuning.value
         prefs?.edit()
             ?.putFloat("cx", t.centerXOffsetDp)
             ?.putFloat("top", t.topOffsetDp)

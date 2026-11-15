@@ -36,7 +36,7 @@ internal object LyricsParser {
 
     fun lrc(raw: String, durationMs: Long): SyncedLyrics? {
         val timestamp = Regex("\\[(\\d+:\\d+(?:\\.\\d+)?)\\]")
-        val offset = Regex("\\[offset:([+-]?\\d+)\\]", RegexOption.IGNORE_CASE).find(raw)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+        val offset = Regex("\\[offset:([+-]?\\d+)\\]", RegexOption.IGNORE_CASE).find(raw)?.groupValues?.get(1)?.toLongOrNull()?.coerceIn(-86_400_000L, 86_400_000L) ?: 0L
         val rows = mutableListOf<Pair<Long, String>>()
         raw.lineSequence().forEach { row ->
             val stamps = timestamp.findAll(row).toList()
@@ -45,7 +45,7 @@ internal object LyricsParser {
         }
         val sorted = rows.distinct().sortedBy { it.first }
         val lines = sorted.mapIndexedNotNull { index, (start, text) ->
-            val end = sorted.drop(index + 1).firstOrNull { it.first > start }?.first ?: durationMs
+            val end = (sorted.drop(index + 1).firstOrNull { it.first > start }?.first ?: durationMs).coerceAtMost(durationMs)
             if (text.isBlank() || end <= start) null else enhancedLine(start, end, text, offset)
         }
         return lines.takeIf { it.isNotEmpty() }?.let { SyncedLyrics(it, "LRCLIB", durationMs) }

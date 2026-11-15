@@ -61,4 +61,19 @@ class CompactLiveStatusTest {
         }
         assertEquals("turn right onto 3rd street", navigationDirectionKey("Turn right onto 3rd Street"))
     }
+
+    @Test fun agentStatusWordsBecomeGlyphs() {
+        assertEquals(CompactStatusGlyph.WORKING, compactStatusGlyph("Working"))
+        assertEquals(CompactStatusGlyph.WORKING, compactStatusGlyph(" thinking… "))
+        assertEquals(CompactStatusGlyph.ATTENTION, compactStatusGlyph("Needs  input"))
+        assertEquals(CompactStatusGlyph.DONE, compactStatusGlyph("Done!"))
+        assertEquals(CompactStatusGlyph.FAILED, compactStatusGlyph("Failed"))
+    }
+
+    @Test fun otherStatusesKeepTheirText() {
+        assertEquals(null, compactStatusGlyph("Arriving"))
+        assertEquals(null, compactStatusGlyph("Working late"))
+        assertEquals(null, compactStatusGlyph("65%"))
+        assertEquals(null, compactStatusGlyph(""))
+    }
 }
