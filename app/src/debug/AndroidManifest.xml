@@ -3,6 +3,7 @@
     <application>
         <activity android:name=".TickerBenchmarkActivity" android:taskAffinity="com.island.dynamicisland.tickerdiagnostics" android:excludeFromRecents="true" android:exported="true" android:permission="android.permission.DUMP" />
         <receiver android:name=".LiveUpdateDemoReceiver" android:exported="true" android:permission="android.permission.DUMP" />
+        <receiver android:name=".ShowcaseDemoReceiver" android:exported="true" android:permission="android.permission.DUMP" />
         <receiver android:name=".MediaActionDemoReceiver" android:exported="true" android:permission="android.permission.DUMP" />
     </application>
 </manifest>

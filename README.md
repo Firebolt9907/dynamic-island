@@ -39,7 +39,11 @@ Activity details and available actions depend on the source app's notifications.
 
 Requires Android 12 (API 31) or later.
 
-1. Install the APK and open **Dynamic Island**.
+<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/Firebolt9907/dynamic-island">
+  <img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="60" />
+</a>
+
+1. Install the APK (from [Releases](https://github.com/Firebolt9907/dynamic-island/releases) or via Obtainium above) and open **Dynamic Island**.
 2. Grant **Notification access** so the island can read media controls and ongoing activities.
 3. Enable the app's **Accessibility service** to display and interact with the island.
 4. Optionally grant **Nearby devices** access for headphone battery information.
@@ -64,3 +68,21 @@ The app uses Kotlin, Jetpack Compose, and Android media sessions.
 ```sh
 ./gradlew :app:testDebugUnitTest
 ```
+
+### Showcase demo (debug builds)
+
+`scripts/showcase.sh` cycles the island through common activities (music, T3 Code agents,
+an ESPN score change, Maps turns, a Blip transfer, a timer, a call, an Uber ride, and several
+at once) for recording smoothness GIFs. It only needs ADB and an installed debug build with
+the accessibility service and notification access enabled.
+
+```sh
+scripts/showcase.sh start                     # loop every scene; ~3.2 s per step
+scripts/showcase.sh start --step 2500 --once  # faster, single pass
+scripts/showcase.sh start --scenes sports,nav,transfer --no-music
+scripts/showcase.sh stop
+```
+
+The activities are synthetic notifications that go through the production parser, so they
+appear in the island but not in the notification shade. Any real ongoing notifications on
+the phone still appear alongside them.
