@@ -9,6 +9,8 @@ into a compact overlay around your camera cutout.
   
 https://github.com/user-attachments/assets/f726ecc7-1f49-4c43-bee4-c8d1b511e7c3
 
+(video uses fake data, screenshots below use real data)
+
 ## Features
 
 - **Music controls** with album artwork, playback progress, and transport controls.
