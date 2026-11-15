@@ -1,4 +1,4 @@
-# Dynamic Island
+# Dynamic Island (WIP)
 
 A Dynamic Island for Android, bringing music controls and ongoing activities
 into a compact overlay around your camera cutout.
@@ -14,7 +14,7 @@ into a compact overlay around your camera cutout.
   stopwatches, calls, and transfers.
 - **Agent activity** showing running and completed tasks from supported notifications.
 - **Multiple activities** in compact bubbles, with expanded views for more detail.
-- **Calibration** to adjust the island's placement for your display.
+- **Calibration** to adjust the island's placement for your display (usually not necessary, as this can detect camera cutouts).
 
 Activity details and available actions depend on the source app's notifications.
 
@@ -52,17 +52,6 @@ The repository includes the Gradle wrapper.
 ```
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
-
-For a signed release, first restore or configure the private signing files as
-described in [SIGNING.md](SIGNING.md), then run:
-
-```sh
-./gradlew :app:assembleRelease
-```
-
-The release APK is written to `app/build/outputs/apk/release/app-release.apk`.
-Release builds reuse the configured persistent signing key. Keep the keystore
-and its passwords backed up securely so future builds can update existing installs.
 
 ## Development
 
