@@ -29,6 +29,10 @@ Activity details and available actions depend on the source app's notifications.
     <td><img src="docs/images/sports.webp" alt="Live football score with game clock and receiving leaders" width="480" /><br /><strong>Sports scores</strong></td>
     <td><img src="docs/images/agent-activity.webp" alt="T3 Code activity showing running and completed tasks" width="480" /><br /><strong>Agent activity</strong></td>
   </tr>
+  <tr>
+    <td><img width="1080" height="547" alt="image" src="https://github.com/user-attachments/assets/ef4fd9e8-cc63-4ed4-bc9b-6265bc7ed874" /><strong>Google Maps</strong></td>
+    <td><img width="1080" height="625" alt="share_2517152918378550285" src="https://github.com/user-attachments/assets/20b164da-0478-4321-b914-173b32b39a0d" /><strong>Many Other Live Activities</strong></td>
+  </tr>
 </table>
 
 ## Getting started
