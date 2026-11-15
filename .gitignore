@@ -10,6 +10,12 @@
 # Local Android SDK configuration
 local.properties
 
+# Private release signing material
+signing.properties
+signing/
+*.jks
+*.keystore
+
 # IDE and operating system files
 .idea/
 *.iml
