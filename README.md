@@ -1,11 +1,13 @@
+
+
+
+
 # Dynamic Island (WIP)
 
 A Dynamic Island for Android, bringing music controls and ongoing activities
 into a compact overlay around your camera cutout.
-
-<p align="center">
-  <img src="docs/images/compact-island.webp" alt="Compact music and T3 Code activities side by side in the status bar" width="800" />
-</p>
+  
+https://github.com/user-attachments/assets/f726ecc7-1f49-4c43-bee4-c8d1b511e7c3
 
 ## Features
 
