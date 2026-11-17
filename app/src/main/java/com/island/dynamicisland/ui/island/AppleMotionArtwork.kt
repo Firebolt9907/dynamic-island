@@ -32,6 +32,13 @@ internal fun AppleMotionArtwork(url: String, playing: Boolean, modifier: Modifie
     val player = remember(url) {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(AppleMotionCache.factory(context)))
+            // Defaults buffer up to 50 s of video in a large heap budget. A muted, looping
+            // cover clip needs a few seconds; segments replay from the disk cache.
+            .setLoadControl(androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(2_000, 5_000, 500, 1_000)
+                .setTargetBufferBytes(4 * 1024 * 1024)
+                .setPrioritizeTimeOverSizeThresholds(false)
+                .build())
             .build().apply {
             volume = 0f
             trackSelectionParameters = trackSelectionParameters.buildUpon()

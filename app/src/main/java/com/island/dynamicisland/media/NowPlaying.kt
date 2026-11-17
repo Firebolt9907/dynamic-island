@@ -93,7 +93,7 @@ object MediaRepository {
     private var artworkJob: kotlinx.coroutines.Job? = null
     private var artworkKey: List<String>? = null
     private val artworkCache = object : LinkedHashMap<List<String>, Pair<Long, AppleArtwork>>(16, .75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<List<String>, Pair<Long, AppleArtwork>>?) = size > 48
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<List<String>, Pair<Long, AppleArtwork>>?) = size > 8
     }
 
     fun update(np: NowPlaying?) {

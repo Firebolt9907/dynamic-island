@@ -119,6 +119,8 @@ fun IslandRoot(
     foregroundPackage: String? = null,
     onBoundsChanged: (Int, Int, Int, Int, Boolean) -> Unit = { _, _, _, _, _ -> },
     onSecondaryBoundsChanged: (List<ActivityTouchBounds>) -> Unit = {},
+    /** Height in px of the screen strip the island can paint into; the host sizes its window to it. */
+    onSurfaceHeightChanged: (Int) -> Unit = {},
 ) {
     DynamicIslandTheme {
         val powerSaveMode by com.island.dynamicisland.power.rememberPowerSaveMode()
@@ -136,20 +138,33 @@ fun IslandRoot(
             }
             if (calibrating) CalibrationLayer()
             else if (lockVisible) {
+                val tuning by IslandConfig.tuning.collectAsStateWithLifecycle()
+                val guide by IslandConfig.cameraGuide.collectAsStateWithLifecycle()
+                val density = LocalDensity.current
                 SideEffect {
                     onBoundsChanged(0, 0, 0, 0, false)
                     onSecondaryBoundsChanged(emptyList())
+                    // The lock pill sits on the camera; it needs only the compact strip.
+                    val bottom = maxOf(tuning.topOffsetDp + tuning.collapsedHeightDp,
+                        (guide?.centerYDp ?: 0f) + tuning.collapsedHeightDp / 2f)
+                    onSurfaceHeightChanged(with(density) { (bottom.dp + IslandShadowMargin).roundToPx() })
                 }
                 LockScreenIsland(locked, keyguardShowing)
             } else BluetoothAudioPresentation(bluetoothAudioEvent.takeIf { surfaceVisible },
                 onBoundsChanged = onBoundsChanged) { presenting, reportBounds ->
                 IslandPill(dismissRequest, foregroundPackage, reportBounds, { bounds ->
                     onSecondaryBoundsChanged(if (presenting) emptyList() else bounds)
-                }, surfaceVisible, onSurfaceHidden)
+                }, surfaceVisible, onSurfaceHidden, onSurfaceHeightChanged)
             }
         }
     }
 }
+
+/**
+ * Room below the card for its shadow. The 32 dp blur is a Gaussian of sigma about 18.5 dp,
+ * so this keeps over four sigma of falloff, plus the 6 dp the expanded shadow spreads.
+ */
+private val IslandShadowMargin = 80.dp
 
 /** Full-screen guide used while aligning the island to the physical camera. */
 @Composable
@@ -199,7 +214,8 @@ private fun CalibrationLayer() {
 @Composable
 private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBoundsChanged: (Int, Int, Int, Int, Boolean) -> Unit,
                        onSecondaryBoundsChanged: (List<ActivityTouchBounds>) -> Unit,
-                       surfaceVisible: Boolean, onSurfaceHidden: () -> Unit) {
+                       surfaceVisible: Boolean, onSurfaceHidden: () -> Unit,
+                       onSurfaceHeightChanged: (Int) -> Unit) {
     val currentActivities by com.island.dynamicisland.live.LiveUpdateRepository.activities.collectAsStateWithLifecycle()
     // Opening an app from the island treats it as foreground at once. Accessibility window
     // reports trail the launch animation by hundreds of milliseconds, which would otherwise
@@ -245,6 +261,12 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
     val reflow = remember { CameraReflowMotion() }
     val haptics = rememberIslandHaptics()
     val motion = remember(scope) { IslandMotion(scope) }
+    // At rest, only the compact pill and its shadow are drawn. Sizing the shadow layer and the
+    // host window to that strip, rather than to the expanded card, keeps GPU buffers small.
+    // derivedStateOf flips once per expansion, so animation frames never trigger remeasure.
+    val compactSurface by remember(motion) { derivedStateOf {
+        !motion.expanded && !motion.previewActive && !motion.transferringActivities && motion.fraction == 0f
+    } }
     var musicHidden by remember { mutableStateOf(musicSource?.isPlaying != true) }
     var interaction by remember { mutableStateOf(0) }
     var activityTouchActive by remember { mutableStateOf(false) }
@@ -993,8 +1015,8 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                         (10.dp / .55f) * contentScale, p) else if (live == null) musicArtSize else artSize
                     val musicContentLeft = (width - full.width * contentScale) / 2f
                     val musicContentTop = (height - contentEnvelopeHeight * contentScale) / 2f
-                    val musicBarsWidth = MusicElementMorph.sharedSize(collapsedH.value * CompactVisualizerWidthFraction, if (motion.musicPeek) 28f else 24f, if (motion.musicPeek) 1f else contentScale, p).dp
-                    val musicBarsHeight = MusicElementMorph.sharedSize(collapsedH.value * CompactVisualizerHeightFraction, if (motion.musicPeek) 24f else 20f, if (motion.musicPeek) 1f else contentScale, p).dp
+                    val musicBarsWidth = MusicElementMorph.sharedSize(collapsedH.value * CompactVisualizerWidthFraction, if (motion.musicPeek) 28f else ExpandedVisualizerWidth, if (motion.musicPeek) 1f else contentScale, p).dp
+                    val musicBarsHeight = MusicElementMorph.sharedSize(collapsedH.value * CompactVisualizerHeightFraction, if (motion.musicPeek) 24f else ExpandedVisualizerHeight, if (motion.musicPeek) 1f else contentScale, p).dp
                     val artInternalInset = if (motion.musicPeek) 0f else musicArtSize.toPx() * p * (10f / musicHeaderHeight.value).coerceAtMost(.2f)
                     val musicCompactBarsTrail = (collapsedH * CompactVisualizerTrailingInset).toPx()
                     val sharedPlacement = MusicElementMorph.symmetricPlacement(
@@ -1061,7 +1083,9 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
                         val cardLeft = displayWidth.dp.toPx() / 2f +
                             (tuning.centerXOffsetDp + arrivalPlacement.center).dp.toPx() * (1f - p) - width / 2f
                         val expandedMargin = (if (motion.musicPeek) 10.dp else 22.dp).toPx()
-                        val expandedBarsWidth = (if (motion.musicPeek) 28.dp else 24.dp).toPx()
+                        // The width the bars finish at, so their right edge lands on the margin.
+                        val expandedBarsWidth = if (motion.musicPeek) 28.dp.toPx() else MusicElementMorph.sharedSize(
+                            collapsedH.value * CompactVisualizerWidthFraction, ExpandedVisualizerWidth, contentScale, 1f).dp.toPx()
                         val expandedLeft = (displayWidth.dp.toPx() + expandedW.toPx()) / 2f -
                             expandedMargin - expandedBarsWidth
                         MusicElementMorph.travellingElementLeft(compactLeft + compactBarsX.toPx(),
@@ -1197,7 +1221,10 @@ private fun IslandPill(dismissRequest: Int, foregroundPackage: String?, onBounds
             }
         },
     ) { measurables, constraints ->
-        val shadowHeight = with(density) { (tuning.topOffsetDp.dp + expandedH + 128.dp).roundToPx() }
+        val shadowHeight = with(density) {
+            (tuning.topOffsetDp.dp + (if (compactSurface) collapsedH else expandedH) + IslandShadowMargin).roundToPx()
+        }
+        onSurfaceHeightChanged(shadowHeight)
         val shadow = measurables[0].measure(androidx.compose.ui.unit.Constraints.fixed(
             constraints.maxWidth, shadowHeight,
         ))

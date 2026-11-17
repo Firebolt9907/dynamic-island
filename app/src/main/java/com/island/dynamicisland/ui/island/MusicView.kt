@@ -182,13 +182,28 @@ internal const val CompactVisualizerWidthFraction = CompactArtworkFraction
 /** Compact visualizer height as a fraction of pill height; iOS peaks reach about half the pill. */
 internal const val CompactVisualizerHeightFraction = 0.55f
 
-/** Peak height per bar: a soft hump so the middle bars reach highest, like iOS. */
+/**
+ * Expanded music card visualizer, in dp: large enough to read beside the 52 dp artwork. It stays
+ * centered on the header line (level with the artwork and title block), and its right edge
+ * mirrors the artwork's visible margin, which is also where the timeline ends.
+ */
+internal const val ExpandedVisualizerWidth = 40f
+internal const val ExpandedVisualizerHeight = 32f
+
+/** Gap between the title block and the expanded visualizer. */
+internal const val ExpandedVisualizerGap = 10f
+
+/** Synthetic peak height per bar: a soft hump so the middle bars reach highest, like iOS. */
 private val equalizerEnvelope = floatArrayOf(.55f, .78f, .95f, 1f, .85f, .6f)
 
 /**
- * Live equalizer bars, iOS-style. Bars animate only while playing; when paused they settle to
- * a calm low level. Each bar has its own period so the motion reads as organic, not synced.
- * A slight left-to-right gradient keeps the bars from reading as flat blocks.
+ * Equalizer bars, iOS-style. With audio access granted they follow the playing audio's
+ * spectrum in real time, bass on the left to treble on the right, at fixed calibration: a
+ * track without low end leaves the left bars resting, and a heavy kick drives them as hard
+ * as any other band. Without live data (no permission, battery saver, muted output) the bars
+ * fall back to synthetic motion, each with its own period so it reads as organic, not synced.
+ * When paused they settle to a calm low level. A slight diagonal gradient keeps the bars
+ * from reading as flat blocks.
  */
 @Composable
 fun Equalizer(
@@ -199,23 +214,36 @@ fun Equalizer(
 ) {
     val count = bars.coerceIn(1, 6)
     val powerSaveMode = com.island.dynamicisland.power.LocalPowerSaveMode.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val visualizerSetting by remember(context) {
+        com.island.dynamicisland.config.MusicControlsConfig.init(context)
+        com.island.dynamicisland.config.MusicControlsConfig.settings
+    }.collectAsState()
+    // With the setting off, bars stay still as in Battery Saver: no capture and no redraws.
+    val motionOff = powerSaveMode || !visualizerSetting.liveVisualizer
     val levels = remember(count) { List(count) { androidx.compose.animation.core.Animatable(0.30f) } }
-    androidx.compose.runtime.LaunchedEffect(playing, count, powerSaveMode) {
-        animateEqualizer(levels, playing, animationsEnabled = !powerSaveMode)
+    val live = rememberLiveBars(enabled = playing && !motionOff, count = count)
+    val showLive = live?.showing == true
+    androidx.compose.runtime.LaunchedEffect(playing, count, motionOff, showLive) {
+        // Live bars drive their own frames; the synthetic loop must not run alongside them.
+        if (!showLive) animateEqualizer(levels, playing, animationsEnabled = !motionOff)
     }
     val vivid = color.vivid()
     val dark = androidx.compose.ui.graphics.lerp(vivid, Color.Black, .50f)
     val light = androidx.compose.ui.graphics.lerp(vivid, Color.White, .35f)
-    androidx.compose.foundation.layout.Spacer(modifier.drawWithCache {
+    androidx.compose.foundation.layout.Spacer(modifier.semantics { contentDescription = "Audio visualizer" }.drawWithCache {
         // Diagonal sweep: darker at the bottom-left, brighter toward the top-right.
         val brush = androidx.compose.ui.graphics.Brush.linearGradient(listOf(dark, vivid, light),
             start = Offset(0f, size.height), end = Offset(size.width, 0f))
         val gap = size.width * 0.30f / (count - 1).coerceAtLeast(1)
         val barWidth = (size.width - gap * (count - 1)) / count
         onDrawBehind {
+            // Read state here, not in composition, so each live frame redraws without recomposing.
+            val liveValues = live?.takeIf { it.showing }?.also { it.frame.intValue }?.values
             for (i in 0 until count) {
-                val envelope = if (count == equalizerEnvelope.size) equalizerEnvelope[i] else 1f
-                val h = (size.height * levels[i].value * envelope).coerceAtLeast(barWidth)
+                val value = if (liveValues != null) liveValues[i]
+                else levels[i].value * (if (count == equalizerEnvelope.size) equalizerEnvelope[i] else 1f)
+                val h = (size.height * value).coerceAtLeast(barWidth)
                 val x = i * (barWidth + gap)
                 val y = (size.height - h) / 2f
                 drawRoundRect(
@@ -350,11 +378,11 @@ fun ExpandedMusic(np: NowPlaying?, appear: () -> Float = { 1f }, interactive: Bo
                 )
             }
             Spacer(Modifier.width(12.dp))
-            if (sharedElements) Spacer(Modifier.size(width = 34.dp, height = 20.dp))
+            if (sharedElements) Spacer(Modifier.size(width = (ExpandedVisualizerWidth + ExpandedVisualizerGap).dp, height = ExpandedVisualizerHeight.dp))
             else Equalizer(
                 color = accent,
                 playing = np?.isPlaying == true,
-                modifier = Modifier.size(width = 24.dp, height = 20.dp),
+                modifier = Modifier.size(width = ExpandedVisualizerWidth.dp, height = ExpandedVisualizerHeight.dp),
             )
         }
 
@@ -686,3 +714,4 @@ private fun playbackTime(milliseconds: Long): String {
     val seconds = milliseconds.coerceAtLeast(0L) / 1000
     return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
 }
+

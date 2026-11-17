@@ -71,6 +71,9 @@ class IslandAccessibilityService : AccessibilityService(),
 
     private lateinit var windowManager: WindowManager
     private var overlayView: ComposeView? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
+    /** Strip height the island paints into; 0 until Compose first reports it. */
+    private var surfaceHeight = 0
     private var touchView: View? = null
     private var touchParams: WindowManager.LayoutParams? = null
     private class SecondaryTouch(val view: View, val params: WindowManager.LayoutParams) {
@@ -199,16 +202,19 @@ class IslandAccessibilityService : AccessibilityService(),
                             syncOverlayVisibility()
                         }
                     }, lockVisible = showingLock, locked = locked, keyguardShowing = keyguardShowing, dismissRequest = dismissRequest, foregroundPackage = foregroundPackage, onBoundsChanged = ::updateTouchBounds,
-                        onSecondaryBoundsChanged = ::updateSecondaryBounds)
+                        onSecondaryBoundsChanged = ::updateSecondaryBounds,
+                        onSurfaceHeightChanged = ::updateSurfaceHeight)
                 }
             }
         }
-        windowManager.addView(overlayView, baseParams().apply {
+        overlayParams = baseParams().apply {
             width = WindowManager.LayoutParams.MATCH_PARENT
-            height = WindowManager.LayoutParams.MATCH_PARENT
-            flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            height = overlayHeight()
+            flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
             title = "Dynamic Island visuals"
-        })
+        }
+        windowManager.addView(overlayView, overlayParams)
         touchParams = baseParams().apply {
             width = 1
             height = 1
@@ -378,7 +384,33 @@ class IslandAccessibilityService : AccessibilityService(),
         windowManager.updateViewLayout(view, params)
     }
 
+    /**
+     * Every window buffer covers the whole window, so a full-screen overlay costs tens of MB
+     * of graphics memory for a strip at the top. Size the window to what the island draws.
+     */
+    private fun overlayHeight(): Int = if (calibrating || surfaceHeight <= 0)
+        WindowManager.LayoutParams.MATCH_PARENT else surfaceHeight
+
+    private val syncOverlayHeightTask = Runnable { syncOverlayHeight() }
+
+    /** Reported from Compose measurement; resize after the current traversal, not inside it. */
+    private fun updateSurfaceHeight(height: Int) {
+        if (height == surfaceHeight) return
+        surfaceHeight = height
+        overlayView?.let { it.removeCallbacks(syncOverlayHeightTask); it.post(syncOverlayHeightTask) }
+    }
+
+    private fun syncOverlayHeight() {
+        val view = overlayView ?: return
+        val params = overlayParams ?: return
+        val height = overlayHeight()
+        if (params.height == height) return
+        params.height = height
+        windowManager.updateViewLayout(view, params)
+    }
+
     private fun applyLayout() {
+        syncOverlayHeight()
         val view = touchView ?: return
         val params = touchParams ?: return
         params.flags = if (calibrating) {
@@ -396,8 +428,9 @@ class IslandAccessibilityService : AccessibilityService(),
         WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+        // Input-only windows never draw, so they skip a GPU context and swapchain of their
+        // own; only the visuals window opts into hardware acceleration.
         PixelFormat.TRANSLUCENT,
     ).apply {
         gravity = Gravity.TOP or Gravity.START
@@ -606,8 +639,13 @@ class IslandAccessibilityService : AccessibilityService(),
         secondaryTouches.clear()
         touchView = null
         touchParams = null
-        overlayView?.let { runCatching { windowManager.removeView(it) } }
+        overlayView?.let {
+            it.removeCallbacks(syncOverlayHeightTask)
+            runCatching { windowManager.removeView(it) }
+        }
         overlayView = null
+        overlayParams = null
+        surfaceHeight = 0
         IslandConfig.setCalibrating(false)
         viewModelStore.clear()
     }

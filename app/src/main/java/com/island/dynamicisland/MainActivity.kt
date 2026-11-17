@@ -142,6 +142,16 @@ private fun SetupScreen() {
             !activity.shouldShowRequestPermissionRationale(Manifest.permission.BLUETOOTH_CONNECT)
         refreshKey++
     }
+    val audioGranted = remember(refreshKey) {
+        context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+    var audioBlocked by remember { mutableStateOf(false) }
+    val audioPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()) { granted ->
+        audioBlocked = !granted &&
+            !activity.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+        refreshKey++
+    }
     val requiredGranted = listOf(listenerGranted, accessibilityGranted).count { it }
     val allReady = requiredGranted == 2
 
@@ -203,6 +213,21 @@ private fun SetupScreen() {
         ) {
             if (bluetoothBlocked) openAppDetails(context)
             else bluetoothPermission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        Spacer(Modifier.height(10.dp))
+        PermissionCard(
+            step = "4",
+            title = "Live music visualizer",
+            subtitle = if (audioBlocked)
+                "Permission was denied. Enable “Microphone” in App info for live equalizer bars."
+            else "Equalizer bars follow the music's real bass and treble. Android labels this " +
+                "microphone access, but the microphone is never used and no audio is recorded or stored.",
+            granted = audioGranted,
+            required = false,
+            actionLabel = if (audioBlocked) "Open" else "Allow",
+        ) {
+            if (audioBlocked) openAppDetails(context)
+            else audioPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
 
         Spacer(Modifier.height(12.dp))

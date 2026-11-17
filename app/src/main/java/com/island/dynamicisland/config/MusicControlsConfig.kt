@@ -13,7 +13,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class SavedMusicApp(val packageName: String, val name: String, val actions: List<PlaybackAction>)
-data class MusicControlsSettings(val remember: Boolean = true, val app: SavedMusicApp? = null, val revision: Int = 0)
+/**
+ * [liveVisualizer]: equalizer bars follow the playing audio. Off skips the audio capture and
+ * keeps the bars still (as in Battery Saver), since redrawing them is most of their cost.
+ */
+data class MusicControlsSettings(val remember: Boolean = true, val app: SavedMusicApp? = null, val revision: Int = 0,
+                                 val liveVisualizer: Boolean = true)
 data class MusicControlSlots(val left: String = "none", val right: String = "cast")
 
 /** Persist only the latest player's action catalog; slot choices are separate for each app. */
@@ -37,13 +42,18 @@ object MusicControlsConfig {
                     if (bytes.isEmpty()) null else BitmapFactory.decodeByteArray(bytes, 0, bytes.size), item.optInt("resource"))
             })
         }.getOrNull() else null
-        mutable.value = MusicControlsSettings(remember, saved)
+        mutable.value = MusicControlsSettings(remember, saved, liveVisualizer = p.getBoolean("live_visualizer", true))
     }
 
     fun remember(value: Boolean) {
         prefs?.edit()?.putBoolean("remember", value)?.apply()
         mutable.value = mutable.value.copy(remember = value)
         if (value) save() else prefs?.edit()?.remove("app")?.apply()
+    }
+
+    fun liveVisualizer(value: Boolean) {
+        prefs?.edit()?.putBoolean("live_visualizer", value)?.apply()
+        mutable.value = mutable.value.copy(liveVisualizer = value)
     }
 
     fun slots(packageName: String?) = MusicControlSlots(

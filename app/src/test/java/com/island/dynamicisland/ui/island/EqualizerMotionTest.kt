@@ -100,3 +100,26 @@ class EqualizerMotionTest {
         assertEquals(0, frames.pendingRequests)
     }
 }
+
+class LiveBarsTest {
+    @Test fun reachesAKickWithinOneCaptureAndFallsSoonAfter() {
+        val bars = LiveBars(6)
+        val targets = floatArrayOf(1f, 0f, 0f, 0f, 0f, .5f)
+        // Three 60 Hz frames ≈ one 20 Hz capture interval.
+        repeat(3) { bars.step(targets, 16.7f) }
+        org.junit.Assert.assertTrue("kick should be mostly up within one capture: ${bars.values[0]}", bars.values[0] > .65f)
+        repeat(3) { bars.step(targets, 16.7f) }
+        org.junit.Assert.assertTrue("and near full within two: ${bars.values[0]}", bars.values[0] > .9f)
+        targets.fill(0f)
+        repeat(3) { bars.step(targets, 16.7f) }
+        org.junit.Assert.assertTrue("bass should glide down, not drop: ${bars.values[0]}", bars.values[0] in .6f..0.8f)
+        repeat(24) { bars.step(targets, 16.7f) }
+        org.junit.Assert.assertTrue("and be near rest after half a second: ${bars.values[0]}", bars.values[0] < .1f)
+    }
+
+    @Test fun fewerBarsKeepBassOnTheLeft() {
+        val bars = LiveBars(3)
+        repeat(30) { bars.step(floatArrayOf(1f, 1f, 0f, 0f, .2f, .2f), 16.7f) }
+        org.junit.Assert.assertArrayEquals(floatArrayOf(1f, 0f, .2f), bars.values, .001f)
+    }
+}

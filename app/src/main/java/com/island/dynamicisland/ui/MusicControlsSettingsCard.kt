@@ -32,6 +32,15 @@ fun MusicControlsSettingsCard() {
                 }
                 Switch(settings.remember, onCheckedChange = null)
             }
+            Row(Modifier.fillMaxWidth().toggleable(value = settings.liveVisualizer, role = Role.Switch,
+                onValueChange = MusicControlsConfig::liveVisualizer), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Live visualizer")
+                    Text("Bars move with the music. Turn off to save battery; the bars then stay still.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(settings.liveVisualizer, onCheckedChange = null)
+            }
             if (app == null) Text("Play music in any app to choose its extra controls.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             else {
                 Text(app.name, style = MaterialTheme.typography.labelLarge)

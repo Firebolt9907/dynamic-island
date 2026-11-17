@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -65,13 +66,15 @@ internal fun CallCard(live: LiveUpdate, appear: () -> Float, interactive: Boolea
                         onClickLabel = "Open call in ${live.appName}", onClick = onOpenSource) else Modifier)) {
                     // Center the measured text stack with the avatar, including
                     // headers that gain a timer or wrap the contact name.
-                    Text(live.appName, color = Color(0xFF8E8E93), fontSize = 11.sp, lineHeight = 14.sp,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 96.dp))
+                    // Text changes (status, contact name, app) crossfade instead of snapping.
+                    ContentUpdateText(live.appName, Modifier.widthIn(max = 96.dp),
+                        style = TextStyle(color = Color(0xFF8E8E93), fontSize = 11.sp, lineHeight = 14.sp),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, contentAlignment = Alignment.CenterStart)
                     Spacer(Modifier.height(4.dp))
                     if (!live.title.equals(live.appName, ignoreCase = true)) {
-                        Text(live.title, color = Color.White, fontSize = 18.sp, lineHeight = 22.sp,
-                            fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        ContentUpdateText(live.title,
+                            style = TextStyle(color = Color.White, fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
+                            maxLines = 2, overflow = TextOverflow.Ellipsis, contentAlignment = Alignment.CenterStart)
                     }
                     live.stopwatch?.let { clock ->
                         NumericTickerText(stopwatchTime(clock, active = active), enabled = active, color = Color(0xFF8E8E93),
@@ -148,9 +151,10 @@ private fun CallActionControl(action: LiveAction, interactive: Boolean, modifier
                 }
             }
         }
-        Text(action.title, color = Color(0xFFAEAEB2), fontSize = 10.sp, lineHeight = 13.sp,
-            maxLines = 2, overflow = TextOverflow.Ellipsis,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp))
+        // Label changes (Mute ↔ Unmute, Speaker ↔ Earpiece) crossfade with the button state.
+        ContentUpdateText(action.title, Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
+            style = TextStyle(color = Color(0xFFAEAEB2), fontSize = 10.sp, lineHeight = 13.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
